@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>eTar</title>
+    <style>
+    .container {
+      margin: 50px auto;
+        background-color: #404040;
+        width: 400px;
+        padding: 15px;
+    }
+    .logo {
+      width: 120px;
+      /* background: black; */
+      padding: 5px;
+    }
+    .logo-box {
+      margin-bottom: 20px;
+    }
+    form {
+      border: 1px solid black;
+      padding: 15px;
+      background-color: white;
+    }
+    label {
+      display:block;
+    }
+    .warning-box {
+      padding: 15px;
+      color: white;
+      background-color: darkred;
+      border: 2px solid grey;
+      margin-top: 15px;
+    }
+    .version {
+      margin-top:15px ;
+      color: #707070;
+      text-align: right;
+    }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <div class="box">
+            <div class="logo-box">
+              <img class="logo" src="images/logo.png" />
+            </div>
+
+            <form id="update-form" action="/api/update" method="POST" enctype="multipart/form-data">
+              <div class="field">
+                <label for="firmware">Firmware</label>
+                <input id="firmware" name="firmware" class="" type="file" />
+              </div>
+              <button id="update" class="btn">Update Firmware</button>
+            </form>
+            <div class="warning-box">
+              <b>WARNING</b>
+              <hr>
+              <p>Ensure eTar is externally powered during update, and do not interrupt the update.</p>
+              <p>The instrument will power off at the end of the update.</p>
+            </div>
+            <div class="version">{{version}}</div>
+      </div>
+    </div>
+  </body>
+</html>

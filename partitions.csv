@@ -1,0 +1,21 @@
+#this is for 16M flash
+# Name,   Type, SubType, Offset,   Size, Flags
+# Note: if you change the phy_init or app partition offset, make sure to change the offset in Kconfig.projbuild,,,,
+
+nvs,      data, nvs,     ,        0x6000,
+otadata,  data, ota,     ,        0x2000,
+phy_init, data, phy,     ,        0x1000,
+storagefat,  data, fat,     ,        300K,
+ota_0,	  app,	ota_0,	 ,		  1800K,
+ota_1,	  app,	ota_1,	 ,		  1800K,
+storage,  data, spiffs,  ,        1000K,
+
+#this is for 4M flash
+# Name,      Type, SubType, Offset,   Size,   Flags
+#nvs,         data, nvs,     ,        0x6000,
+#otadata,     data, ota,     ,        0x2000,
+#phy_init,    data, phy,     ,        0x1000,
+#storagefat,  data, fat,     ,        256K,
+#ota_0,       app,  ota_0,   ,        1536K,
+#ota_1,       app,  ota_1,   ,        1536K,
+#storage,     data, spiffs,  ,        512K,

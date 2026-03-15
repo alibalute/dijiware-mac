@@ -1,0 +1,5 @@
+#!/bin/bash
+
+ver="$(head -1 version.txt)"
+
+cp build/etar.bin firmware/etar-$ver.bin
