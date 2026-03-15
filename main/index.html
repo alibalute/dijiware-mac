@@ -1,76 +1,218 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
-    <title>eTar</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Firmware Update</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: 'Inter', -apple-system, sans-serif;
+      font-size: 15px;
+      color: #1F2933;
+      background: #F7F3EA;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
     .container {
-      margin: 50px auto;
-        background-color: #404040;
-        width: 400px;
-        padding: 15px;
+      width: 100%;
+      max-width: 420px;
+      background: #F4EFE2;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(31, 41, 51, 0.08);
+      overflow: hidden;
+      border: 1px solid #ECE4D3;
+    }
+    .header {
+      background: linear-gradient(135deg, #482C76 0%, #20767A 100%);
+      padding: 24px;
+      text-align: center;
     }
     .logo {
-      width: 120px;
-      /* background: black; */
-      padding: 5px;
+      max-width: 100px;
+      height: auto;
+      display: block;
+      margin: 0 auto 8px;
     }
-    .logo-box {
-      margin-bottom: 20px;
+    .header-title {
+      margin: 0;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #F7F3EA;
+      letter-spacing: 0.02em;
     }
-    form {
-      border: 1px solid black;
-      padding: 15px;
-      background-color: white;
+    .header-sub {
+      margin: 4px 0 0;
+      font-size: 0.8125rem;
+      font-weight: 400;
+      color: rgba(247, 243, 234, 0.85);
+    }
+    .card {
+      padding: 24px;
+    }
+    .form-card {
+      background: #F7F3EA;
+      border: 1px solid #ECE4D3;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 16px;
     }
     label {
-      display:block;
+      display: block;
+      font-weight: 500;
+      color: #1F2933;
+      margin-bottom: 8px;
+      font-size: 0.9375rem;
     }
-    .warning-box {
-      padding: 15px;
-      color: white;
-      background-color: darkred;
-      border: 2px solid grey;
-      margin-top: 15px;
+    input[type="file"] {
+      width: 100%;
+      padding: 10px 12px;
+      font-family: inherit;
+      font-size: 0.875rem;
+      color: #1F2933;
+      background: #F7F3EA;
+      border: 1px solid #7C8691;
+      border-radius: 8px;
+      cursor: pointer;
     }
-    .version {
-      margin-top:15px ;
-      color: #707070;
-      text-align: right;
+    input[type="file"]:focus {
+      outline: none;
+      border-color: #20767A;
+      box-shadow: 0 0 0 2px rgba(32, 118, 122, 0.2);
     }
-    .status-box {
-      margin-top: 15px;
-      padding: 15px;
-      border: 2px solid grey;
-      background-color: #f5f5f5;
+    .btn {
+      width: 100%;
+      margin-top: 16px;
+      padding: 12px 20px;
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #1F2933;
+      background: #EEA803;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.05s;
+    }
+    .btn:hover {
+      background: #d99703;
+    }
+    .btn:active {
+      transform: scale(0.98);
+    }
+    .btn:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(238, 168, 3, 0.35);
+    }
+    #status {
+      margin-bottom: 16px;
+      border-radius: 10px;
+      padding: 16px;
+      font-size: 0.9375rem;
+      line-height: 1.5;
       min-height: 2em;
     }
-    .status-box.error { background-color: #ffdddd; }
-    .status-box.success { background-color: #ddffdd; }
+    #status:not([style*="display: none"]) {
+      display: block;
+    }
+    .status-box {
+      background: #ECE4D3;
+      border: 1px solid #7C8691;
+      color: #1F2933;
+    }
+    .status-box.success {
+      background: rgba(32, 118, 122, 0.12);
+      border-color: #20767A;
+      color: #1F2933;
+    }
+    .status-box.error {
+      background: rgba(72, 44, 118, 0.1);
+      border-color: #482C76;
+      color: #1F2933;
+    }
+    .status-box p { margin: 0 0 0.5em; }
+    .status-box p:last-child { margin-bottom: 0; }
+    .ota-fail-title { font-weight: 600; margin-bottom: 0.35em; }
+    .ota-fail-reason { color: #3E4A56; font-size: 0.9375rem; }
+    .progress-wrap {
+      margin-top: 12px;
+      height: 10px;
+      background: #ECE4D3;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #20767A, #482C76);
+      width: 0%;
+      transition: width 0.2s ease;
+      border-radius: 5px;
+    }
+    .progress-text {
+      margin-top: 8px;
+      font-size: 0.8125rem;
+      color: #3E4A56;
+    }
+    .warning-box {
+      background: #ECE4D3;
+      border: 1px solid #7C8691;
+      border-left: 4px solid #EEA803;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .warning-box b {
+      color: #1F2933;
+      font-size: 0.9375rem;
+    }
+    .warning-box hr {
+      border: none;
+      border-top: 1px solid #7C8691;
+      margin: 10px 0;
+      opacity: 0.5;
+    }
+    .warning-box p {
+      margin: 0;
+      font-size: 0.875rem;
+      color: #3E4A56;
+      line-height: 1.5;
+    }
+    .version {
+      font-size: 0.8125rem;
+      color: #7C8691;
+      text-align: right;
+    }
     </style>
   </head>
-
   <body>
     <div class="container">
-      <div class="box">
-            <div class="logo-box">
-              <img class="logo" src="images/logo.png" />
-            </div>
-
-            <form id="update-form">
-              <div class="field">
-                <label for="firmware">Firmware</label>
-                <input id="firmware" name="firmware" class="" type="file" required />
-              </div>
-              <button id="update" type="submit" class="btn">Update Firmware</button>
-            </form>
-            <div id="status" class="status-box" style="display:none;"></div>
-            <div class="warning-box">
-              <b>WARNING</b>
-              <hr>
-              <p>Ensure eTar is externally powered during update, and do not interrupt the update.</p>
-              <p>The instrument will power off at the end of the update.</p>
-            </div>
-            <div class="version">{{version}}</div>
+      <header class="header">
+        <img class="logo" src="images/logo.png" alt="Dijilele" />
+        <h1 class="header-title">Firmware Update</h1>
+        <p class="header-sub"></p>
+      </header>
+      <div class="card">
+        <div class="form-card">
+          <form id="update-form">
+            <label for="firmware">Firmware file</label>
+            <input id="firmware" name="firmware" type="file" accept=".bin" required />
+            <button id="update" type="submit" class="btn">Update Firmware</button>
+          </form>
+        </div>
+        <div id="status" class="status-box" style="display:none;"></div>
+        <div class="warning-box">
+          <b>Important</b>
+          <hr>
+          <p>Keep the device powered during the update. Do not disconnect or turn off until the process finishes. The device will restart when the update is complete.</p>
+        </div>
+        <div class="version">{{version}}</div>
       </div>
     </div>
     <script>
@@ -84,28 +226,46 @@
           statusEl.innerHTML = '<p>Please select a firmware file.</p>';
           return false;
         }
+        var file = fileInput.files[0];
+        var formData = new FormData();
+        formData.append('firmware', file);
         statusEl.style.display = 'block';
         statusEl.className = 'status-box';
-        statusEl.innerHTML = '<p>Uploading, please wait… (this can take 1–2 minutes)</p>';
-        var formData = new FormData();
-        formData.append('firmware', fileInput.files[0]);
-        fetch('/api/update', {
-          method: 'POST',
-          body: formData
-        })
-        .then(function(response) { return response.text(); })
-        .then(function(text) {
-          statusEl.innerHTML = text;
-          if (text.indexOf('success') !== -1 || text.indexOf('successfully') !== -1) {
-            statusEl.className = 'status-box success';
-          } else if (text.indexOf('failed') !== -1 || text.indexOf('Transfer failed') !== -1) {
-            statusEl.className = 'status-box error';
+        statusEl.innerHTML = '<p>Uploading…</p><div class="progress-wrap"><div class="progress-bar" id="progress-bar"></div></div><div class="progress-text" id="progress-text">0%</div>';
+        var progressBar = document.getElementById('progress-bar');
+        var progressText = document.getElementById('progress-text');
+        var xhr = new XMLHttpRequest();
+        xhr.upload.addEventListener('progress', function(ev) {
+          if (ev.lengthComputable) {
+            var pct = Math.round((ev.loaded / ev.total) * 100);
+            progressBar.style.width = pct + '%';
+            progressText.textContent = pct + '% (' + Math.round(ev.loaded / 1024) + ' / ' + Math.round(ev.total / 1024) + ' KB)';
+          } else {
+            progressBar.style.width = '50%';
+            progressText.textContent = Math.round(ev.loaded / 1024) + ' KB sent…';
           }
-        })
-        .catch(function(err) {
+        });
+        xhr.addEventListener('load', function() {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            progressBar.style.width = '100%';
+            progressText.textContent = 'Upload complete. Processing…';
+            statusEl.innerHTML = xhr.responseText;
+            if (xhr.responseText.indexOf('success') !== -1 || xhr.responseText.indexOf('successfully') !== -1) {
+              statusEl.className = 'status-box success';
+            } else if (xhr.responseText.indexOf('failed') !== -1 || xhr.responseText.indexOf('Transfer failed') !== -1) {
+              statusEl.className = 'status-box error';
+            }
+          } else {
+            statusEl.className = 'status-box error';
+            statusEl.innerHTML = '<p>Server returned error ' + xhr.status + '.</p>';
+          }
+        });
+        xhr.addEventListener('error', function() {
           statusEl.className = 'status-box error';
           statusEl.innerHTML = '<p>Request failed or timed out. Check the device is still on and try again.</p>';
         });
+        xhr.open('POST', '/api/update');
+        xhr.send(formData);
         return false;
       };
     </script>

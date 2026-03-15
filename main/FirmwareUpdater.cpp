@@ -11,6 +11,7 @@
 
 #include "FirmwareUpdater.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -46,8 +47,18 @@ static size_t overflow_len = 0;
 TaskHandle_t g_hOta;
 static int s_ota_bytes_for_debug = 0;
 
+#define OTA_FAIL_REASON_MAX 120
+static char s_ota_fail_reason[OTA_FAIL_REASON_MAX];
+
 /* Forward declaration: defined below after runOtaUpload. */
 static int findFirmwareStartInBuffer(const char *buf, size_t len);
+
+static void set_ota_fail_reason(const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(s_ota_fail_reason, sizeof(s_ota_fail_reason), fmt, ap);
+  va_end(ap);
+}
 
 /* On error: set state and return so handler can send fail response. */
 static void ota_fail_return(void) {
@@ -84,6 +95,7 @@ static void runOtaUpload(httpd_req_t *req) {
     ESP_LOG_BUFFER_HEXDUMP(TAG, buffer, data_read, ESP_LOG_DEBUG);
     if (data_read < 0 && data_read != HTTPD_SOCK_ERR_TIMEOUT) {
       ESP_LOGE(TAG, "Error: HTTP receive error");
+      set_ota_fail_reason("Network or connection error during upload.");
       otaFailed = true;
       ota_fail_return();
       return;
@@ -146,6 +158,7 @@ static void runOtaUpload(httpd_req_t *req) {
           ESP_LOGI(TAG, "Found firmware in accumulated header (%u bytes)", (unsigned)body_len);
         } else {
           ESP_LOGE(TAG, "Multipart header not found in first %u bytes", (unsigned)HEADER_ACCUM_MAX);
+          set_ota_fail_reason("Invalid upload format. Use the firmware page and select a .bin file.");
           otaFailed = true;
           ota_fail_return();
         return;
@@ -184,6 +197,7 @@ static void runOtaUpload(httpd_req_t *req) {
           vTaskDelay(pdMS_TO_TICKS(80));
           if (update_partition == NULL) {
             ESP_LOGE(TAG, "No OTA update partition found");
+            set_ota_fail_reason("No OTA partition found. Device configuration error.");
             ota_fail_return();
             return;
           }
@@ -224,6 +238,7 @@ static void runOtaUpload(httpd_req_t *req) {
               ESP_LOGW(
                   TAG,
                   "The firmware has been rolled back to the previous version.");
+              set_ota_fail_reason("This firmware version was previously tried and failed to boot. Use a different firmware version.");
               ota_fail_return();
               return;
             }
@@ -234,6 +249,7 @@ static void runOtaUpload(httpd_req_t *req) {
             ESP_LOGW(TAG,
                      "Current running version is the same as a new. We will "
                      "not continue the update.");
+            set_ota_fail_reason("The selected firmware is the same version already installed. No update needed.");
             ota_fail_return();
             return;
           }
@@ -245,6 +261,7 @@ static void runOtaUpload(httpd_req_t *req) {
           if (err != ESP_OK) {
             ESP_LOGE(TAG, "esp_ota_begin failed (%s)", esp_err_to_name(err));
             esp_ota_end(update_handle);
+            set_ota_fail_reason("Could not start update (%s).", esp_err_to_name(err));
             ota_fail_return();
           return;
           }
@@ -254,6 +271,7 @@ static void runOtaUpload(httpd_req_t *req) {
         } else {
           ESP_LOGE(TAG, "received package is not fit len");
           esp_ota_end(update_handle);
+          set_ota_fail_reason("Firmware file too small or invalid. Select a valid .bin file.");
           ota_fail_return();
           return;
         }
@@ -280,6 +298,7 @@ static void runOtaUpload(httpd_req_t *req) {
           err = esp_ota_write(update_handle, (const void *)(buffer + off), n);
           if (err != ESP_OK) {
             esp_ota_end(update_handle);
+            set_ota_fail_reason("Write error during update.");
             ota_fail_return();
             return;
           }
@@ -314,6 +333,7 @@ static void runOtaUpload(httpd_req_t *req) {
   }
   if (!image_header_was_checked || binary_file_length == 0) {
     ESP_LOGE(TAG, "OTA incomplete: no firmware received");
+    set_ota_fail_reason("No valid firmware data received. The file may be empty or corrupted.");
     otaFailed = true;
     ota_fail_return();
   return;
@@ -326,8 +346,10 @@ static void runOtaUpload(httpd_req_t *req) {
   if (err != ESP_OK) {
     if (err == ESP_ERR_OTA_VALIDATE_FAILED) {
       ESP_LOGE(TAG, "Image validation failed, image is corrupted");
+      set_ota_fail_reason("Firmware image is corrupted or invalid.");
     } else {
       ESP_LOGE(TAG, "esp_ota_end failed (%s)!", esp_err_to_name(err));
+      set_ota_fail_reason("Update validation failed (%s).", esp_err_to_name(err));
     }
     ota_fail_return();
   return;
@@ -337,6 +359,7 @@ static void runOtaUpload(httpd_req_t *req) {
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_ota_set_boot_partition failed (%s)!",
              esp_err_to_name(err));
+    set_ota_fail_reason("Could not set boot partition (%s).", esp_err_to_name(err));
     ota_fail_return();
   return;
   }
@@ -434,6 +457,7 @@ esp_err_t FirmwareUpdater::handler(httpd_req *req) {
 
       otaStarted = false;
       otaFailed = false;
+      s_ota_fail_reason[0] = '\0';
 
       /* If no body, send message and return so browser always gets a response. */
       if (req->content_len == 0) {
@@ -448,18 +472,31 @@ esp_err_t FirmwareUpdater::handler(httpd_req *req) {
 
       runOtaUpload(req);
 
-      /* If OTA failed, unregister from WDT and send one response (same as curl). */
+      /* If OTA failed, unregister from WDT and send one response with reason. */
       if (otaFailed) {
         TaskHandle_t self = xTaskGetCurrentTaskHandle();
         if (self != NULL) {
           esp_task_wdt_delete(self);
         }
-        static const char fail_html[] =
-          "<!DOCTYPE html><html><head><title>OTA Update</title></head><body>"
-          "<p style=\"color:red;font-weight:bold;\">Transfer failed.</p></body></html>";
-        httpd_resp_set_status(req, "200 OK");
-        httpd_resp_set_type(req, "text/html");
-        httpd_resp_send(req, fail_html, (ssize_t)sizeof(fail_html) - 1);
+        static char fail_resp[512];
+        const char *reason = (s_ota_fail_reason[0] != '\0')
+            ? s_ota_fail_reason
+            : "Unknown error.";
+        /* Fragment for client to inject into status box (no full document). */
+        int n = snprintf(fail_resp, sizeof(fail_resp),
+            "<p class=\"ota-fail-title\">Transfer failed.</p><p class=\"ota-fail-reason\">%s</p>",
+            reason);
+        if (n > 0 && (size_t)n < sizeof(fail_resp)) {
+          httpd_resp_set_status(req, "200 OK");
+          httpd_resp_set_type(req, "text/html");
+          httpd_resp_send(req, fail_resp, (ssize_t)n);
+        } else {
+          static const char fail_fallback[] =
+              "<p class=\"ota-fail-title\">Transfer failed.</p><p class=\"ota-fail-reason\">Unknown error.</p>";
+          httpd_resp_set_status(req, "200 OK");
+          httpd_resp_set_type(req, "text/html");
+          httpd_resp_send(req, fail_fallback, (ssize_t)sizeof(fail_fallback) - 1);
+        }
         return ESP_OK;
       }
       /* On success runOtaUpload already sent the response and restarted the device. */
