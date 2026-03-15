@@ -158,6 +158,7 @@ bool WebServer::addApis(const char* path) {
 void WebServer::start(void) {
   webConfig.lru_purge_enable = true;
   webConfig.max_uri_handlers = MAX_URIS;
+  webConfig.stack_size = 8192;  /* OTA runs in handler task and needs more stack */
   ESP_LOGI(TAG, "Starting server on port: '%d'", webConfig.server_port);
   if (httpd_start(&server, &webConfig) == ESP_OK) {
     uriCount = 0;

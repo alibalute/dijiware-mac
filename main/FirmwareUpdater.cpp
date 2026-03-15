@@ -12,6 +12,7 @@
 #include "FirmwareUpdater.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #include "esp_flash_partitions.h"
 #include "esp_log.h"
@@ -26,118 +27,134 @@
 #include "ota_debug.h"
 
 #define BUFFER_SIZE 2048
+#define HEADER_ACCUM_MAX 2048
 /* Write to flash in small chunks so each esp_ota_write is short; avoids interrupt WDT reset. */
 #define OTA_WRITE_CHUNK 128
 #define DEBUG_LEVEL ESP_LOG_INFO
-
-/* Set to 1 to restart device after successful OTA; 0 to leave running (e.g. to see serial logs). */
-#ifndef OTA_AUTO_RESTART
-#define OTA_AUTO_RESTART 0
-#endif
+#define OTA_RESTART_DELAY_MS 8000
 
 static const char *TAG = "FWupd";
 static bool otaStarted = false, otaFailed = false;
 static bool binaryFound = false;
 static uint8_t buffer[BUFFER_SIZE];
-
+/* Accumulate first chunk(s) so multipart header split across recv() is found (browser uploads). */
+static uint8_t header_accum[HEADER_ACCUM_MAX];
+static size_t header_accum_len = 0;
+/* When we find firmware start in accumulation but consumed only part of recv, rest goes here. */
+static uint8_t overflow_buf[BUFFER_SIZE];
+static size_t overflow_len = 0;
 TaskHandle_t g_hOta;
 static int s_ota_bytes_for_debug = 0;
 
-static void __attribute__((noreturn)) task_fatal_error(void) {
+/* Forward declaration: defined below after runOtaUpload. */
+static int findFirmwareStartInBuffer(const char *buf, size_t len);
+
+/* On error: set state and return so handler can send fail response. */
+static void ota_fail_return(void) {
   otaFailed = true;
   ota_debug_save_ota_state(0, (uint32_t)s_ota_bytes_for_debug);
-  ESP_LOGE(TAG, "Exiting task due to fatal error...");
-  TaskHandle_t self = xTaskGetCurrentTaskHandle();
-  if (self != NULL) {
-    esp_task_wdt_delete(self);
-  }
-  (void)vTaskDelete(NULL);
-
-  while (1) {
-    ;
-  }
+  ESP_LOGE(TAG, "OTA failed, returning to handler");
+  return;
 }
 
-void otaTask(void *pvParameter) {
+/**
+ * Run OTA in the handler task so request body read and response send use the same context.
+ * Returns when done; on failure sets otaFailed and returns; on success sends message and esp_restart().
+ */
+static void runOtaUpload(httpd_req_t *req) {
   esp_err_t err;
-  httpd_req *req = (httpd_req *)pvParameter;
-  size_t recv_size = MIN(req->content_len, BUFFER_SIZE);
+  /* Never pass 0 to recv; use BUFFER_SIZE so we always read in chunks (browser may omit Content-Length). */
+  size_t recv_size = (req->content_len > 0 && req->content_len <= BUFFER_SIZE)
+      ? (size_t)req->content_len : BUFFER_SIZE;
+  if (recv_size == 0) {
+    recv_size = BUFFER_SIZE;
+  }
   TaskHandle_t self = xTaskGetCurrentTaskHandle();
 
-  /* Subscribe to task WDT so this task is watched; we will feed it in the loop.
-   * Otherwise only idle is watched and we starve it during long OTA -> device reset. */
-  if (self != NULL && esp_task_wdt_add(self) == ESP_OK) {
-    ESP_LOGD(TAG, "OTA task subscribed to WDT");
-  }
-
-  /* Idle for 1s so WiFi/HTTP and power settle before we touch NVS or partition. */
-  vTaskDelay(pdMS_TO_TICKS(1000));
-
-  ota_debug_save_ota_state(1, 0);
-  ota_debug_save_ota_phase(0);
-
-  /* Brief delay before partition/flash ops. */
-  vTaskDelay(pdMS_TO_TICKS(300));
-
-  ESP_LOGD(TAG, "OTA Task starting");
-
-  /* update handle : set by esp_ota_begin(), must be freed via esp_ota_end() */
+  /* No NVS, no partition, no delay – go straight to reading (reduces chance of early crash/restart). */
   esp_ota_handle_t update_handle = 0;
   const esp_partition_t *update_partition = NULL;
-
-  ESP_LOGI(TAG, "Starting OTA");
-
-  const esp_partition_t *configured = esp_ota_get_boot_partition();
-  vTaskDelay(pdMS_TO_TICKS(80));
-  const esp_partition_t *running = esp_ota_get_running_partition();
-  vTaskDelay(pdMS_TO_TICKS(80));
-
-  if (configured != running) {
-    ESP_LOGW(TAG,
-             "Configured OTA boot partition at offset 0x%08lx, but running from "
-             "offset 0x%08lx",
-             configured->address, running->address);
-    ESP_LOGW(TAG,
-             "(This can happen if either the OTA boot data or preferred boot "
-             "image become corrupted somehow.)");
-  }
-  ESP_LOGI(TAG, "Running partition type %d subtype %d (offset 0x%08lx)",
-           running->type, running->subtype, running->address);
-
-  update_partition = esp_ota_get_next_update_partition(NULL);
-  vTaskDelay(pdMS_TO_TICKS(80));
-  assert(update_partition != NULL);
-  ESP_LOGI(TAG, "Writing to partition subtype %d at offset 0x%lx",
-           update_partition->subtype, update_partition->address);
-
-  ota_debug_save_ota_phase(4);  /* partition_done: we got past partition ops */
 
   int binary_file_length = 0;
   initParser();
   size_t total = 0;
   bool image_header_was_checked = false;
   while (1) {
-    if (self != NULL) {
-      esp_task_wdt_reset();
-    }
     int data_read = httpd_req_recv(req, (char *)buffer, recv_size);
     ESP_LOG_BUFFER_HEXDUMP(TAG, buffer, data_read, ESP_LOG_DEBUG);
     if (data_read < 0 && data_read != HTTPD_SOCK_ERR_TIMEOUT) {
       ESP_LOGE(TAG, "Error: HTTP receive error");
       otaFailed = true;
-      task_fatal_error();
+      ota_fail_return();
+      return;
     } else if (data_read == 0) {
       break;  // we're done
     } else if (data_read == HTTPD_SOCK_ERR_TIMEOUT) {
       vTaskDelay(pdMS_TO_TICKS(10));
     } else if (data_read > 0) {
+      /* Do not send any response until OTA is fully done (same as curl: read all, then respond once). */
+      /* Prepend any overflow from previous iteration (body bytes we had to defer). */
+      if (overflow_len > 0) {
+        size_t total = overflow_len + (size_t)data_read;
+        if (total <= BUFFER_SIZE) {
+          memmove(buffer + overflow_len, buffer, (size_t)data_read);
+          memcpy(buffer, overflow_buf, overflow_len);
+          data_read = (int)total;
+          overflow_len = 0;
+        } else {
+          memcpy(header_accum, overflow_buf, overflow_len);
+          memcpy(header_accum + overflow_len, buffer, (size_t)data_read);
+          memcpy(buffer, header_accum, BUFFER_SIZE);
+          data_read = BUFFER_SIZE;
+          overflow_len = total - BUFFER_SIZE;
+          memcpy(overflow_buf, header_accum + BUFFER_SIZE, overflow_len);
+        }
+      }
       total += data_read;
       uint8_t *firmwareData = NULL;
       size_t size = 0;
-      if (parseData(buffer, data_read, &firmwareData, &size) && size > 0) {
+      if (!binaryFound && header_accum_len + (size_t)data_read <= HEADER_ACCUM_MAX) {
+        /* Accumulate so multipart header split across recv() is found (browser uploads). */
+        memcpy(header_accum + header_accum_len, buffer, (size_t)data_read);
+        header_accum_len += (size_t)data_read;
+        int off = findFirmwareStartInBuffer((const char *)header_accum, header_accum_len);
+        if (off >= 0) {
+          size_t body_len = header_accum_len - (size_t)off;
+          memcpy(buffer, header_accum + off, body_len);
+          data_read = (int)body_len;
+          binaryFound = true;
+          ESP_LOGI(TAG, "Found firmware in accumulated header (%u bytes)", (unsigned)body_len);
+        } else {
+          data_read = 0;  /* skip this chunk, wait for more to find header */
+        }
+      } else if (!binaryFound && header_accum_len + (size_t)data_read > HEADER_ACCUM_MAX) {
+        /* Fill accumulation to limit and search once. */
+        size_t to_add = HEADER_ACCUM_MAX - header_accum_len;
+        memcpy(header_accum + header_accum_len, buffer, to_add);
+        header_accum_len = HEADER_ACCUM_MAX;
+        int off = findFirmwareStartInBuffer((const char *)header_accum, header_accum_len);
+        if (off >= 0) {
+          size_t body_len = header_accum_len - (size_t)off;
+          int orig_recv = data_read;
+          if (to_add < (size_t)orig_recv) {
+            overflow_len = (size_t)orig_recv - to_add;
+            memcpy(overflow_buf, buffer + to_add, overflow_len);
+          }
+          memcpy(buffer, header_accum + off, body_len);
+          data_read = (int)body_len;
+          binaryFound = true;
+          ESP_LOGI(TAG, "Found firmware in accumulated header (%u bytes)", (unsigned)body_len);
+        } else {
+          ESP_LOGE(TAG, "Multipart header not found in first %u bytes", (unsigned)HEADER_ACCUM_MAX);
+          otaFailed = true;
+          ota_fail_return();
+        return;
+        }
+      } else if (parseData(buffer, data_read, &firmwareData, &size) && size > 0) {
         memcpy(buffer, firmwareData, size);
-        data_read = size;
+        data_read = (int)size;
       }
+      if (data_read <= 0) continue;
       ESP_LOGD(TAG, "Received %u bytes (total = %u)", data_read, total);
       if (image_header_was_checked == false) {
         esp_app_desc_t new_app_info;
@@ -151,6 +168,31 @@ void otaTask(void *pvParameter) {
                          sizeof(esp_image_segment_header_t)],
                  sizeof(esp_app_desc_t));
           ESP_LOGI(TAG, "New firmware version: %s", new_app_info.version);
+
+          ota_debug_save_ota_state(1, 0);
+          ota_debug_save_ota_phase(0);
+
+          /* Only touch partition now that we have firmware data (avoids early restart). */
+          const esp_partition_t *configured = esp_ota_get_boot_partition();
+          vTaskDelay(pdMS_TO_TICKS(80));
+          const esp_partition_t *running = esp_ota_get_running_partition();
+          vTaskDelay(pdMS_TO_TICKS(80));
+          if (configured != running) {
+            ESP_LOGW(TAG, "Configured boot partition differs from running");
+          }
+          update_partition = esp_ota_get_next_update_partition(NULL);
+          vTaskDelay(pdMS_TO_TICKS(80));
+          if (update_partition == NULL) {
+            ESP_LOGE(TAG, "No OTA update partition found");
+            ota_fail_return();
+            return;
+          }
+          ESP_LOGI(TAG, "Writing to partition at offset 0x%lx", (unsigned long)update_partition->address);
+          ota_debug_save_ota_phase(4);
+
+          if (self != NULL && esp_task_wdt_add(self) == ESP_OK) {
+            ESP_LOGD(TAG, "OTA: subscribed to WDT");
+          }
 
           esp_app_desc_t running_app_info;
           if (esp_ota_get_partition_description(running, &running_app_info) ==
@@ -182,7 +224,8 @@ void otaTask(void *pvParameter) {
               ESP_LOGW(
                   TAG,
                   "The firmware has been rolled back to the previous version.");
-              task_fatal_error();
+              ota_fail_return();
+              return;
             }
           }
 
@@ -191,7 +234,8 @@ void otaTask(void *pvParameter) {
             ESP_LOGW(TAG,
                      "Current running version is the same as a new. We will "
                      "not continue the update.");
-            task_fatal_error();
+            ota_fail_return();
+            return;
           }
 
           image_header_was_checked = true;
@@ -201,7 +245,8 @@ void otaTask(void *pvParameter) {
           if (err != ESP_OK) {
             ESP_LOGE(TAG, "esp_ota_begin failed (%s)", esp_err_to_name(err));
             esp_ota_end(update_handle);
-            task_fatal_error();
+            ota_fail_return();
+          return;
           }
           ESP_LOGI(TAG, "esp_ota_begin succeeded");
           vTaskDelay(pdMS_TO_TICKS(500));
@@ -209,7 +254,8 @@ void otaTask(void *pvParameter) {
         } else {
           ESP_LOGE(TAG, "received package is not fit len");
           esp_ota_end(update_handle);
-          task_fatal_error();
+          ota_fail_return();
+          return;
         }
       }
       if (image_header_was_checked && data_read > 0) {
@@ -234,7 +280,8 @@ void otaTask(void *pvParameter) {
           err = esp_ota_write(update_handle, (const void *)(buffer + off), n);
           if (err != ESP_OK) {
             esp_ota_end(update_handle);
-            task_fatal_error();
+            ota_fail_return();
+            return;
           }
           binary_file_length += (int)n;
           s_ota_bytes_for_debug = binary_file_length;
@@ -265,6 +312,12 @@ void otaTask(void *pvParameter) {
   if (self != NULL) {
     esp_task_wdt_delete(self);
   }
+  if (!image_header_was_checked || binary_file_length == 0) {
+    ESP_LOGE(TAG, "OTA incomplete: no firmware received");
+    otaFailed = true;
+    ota_fail_return();
+  return;
+  }
   ota_debug_save_ota_state(0, (uint32_t)binary_file_length);
   otaStarted = true;
   ESP_LOGI(TAG, "Total Write binary data length: %d", binary_file_length);
@@ -276,14 +329,16 @@ void otaTask(void *pvParameter) {
     } else {
       ESP_LOGE(TAG, "esp_ota_end failed (%s)!", esp_err_to_name(err));
     }
-    task_fatal_error();
+    ota_fail_return();
+  return;
   }
 
   err = esp_ota_set_boot_partition(update_partition);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_ota_set_boot_partition failed (%s)!",
              esp_err_to_name(err));
-    task_fatal_error();
+    ota_fail_return();
+  return;
   }
 
   nvs_handle_t h_nvs;
@@ -296,16 +351,44 @@ void otaTask(void *pvParameter) {
     nvs_commit(h_nvs);
     nvs_close(h_nvs);
   }
-#if OTA_AUTO_RESTART
-  ESP_LOGI(TAG, "Prepare to restart system!");
-  vTaskDelay(pdMS_TO_TICKS(2000));
+
+  /* Same as curl: send one response only after transfer is complete, then delay and restart. */
+  static const char success_html[] =
+    "<!DOCTYPE html><html><head><title>OTA Update</title></head><body>"
+    "<p style=\"color:green;font-weight:bold;\">Transfer complete successfully.</p>"
+    "<p>Device will restart in 8 seconds...</p></body></html>";
+  httpd_resp_set_status(req, "200 OK");
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_send(req, success_html, (ssize_t)sizeof(success_html) - 1);
+  vTaskDelay(pdMS_TO_TICKS(OTA_RESTART_DELAY_MS));
+  ESP_LOGI(TAG, "Restarting device.");
   esp_restart();
   return;
-#else
-  ESP_LOGI(TAG, "OTA success. Device left running (OTA_AUTO_RESTART=0).");
-  vTaskDelete(NULL);
-  return;
-#endif
+}
+
+/* Find start of binary in multipart body: header must contain form-data, name="firmware", and filename=;
+ * body starts after the first \r\n\r\n. Returns offset of first body byte, or -1. */
+static int findFirmwareStartInBuffer(const char *buf, size_t len) {
+  const char *body = NULL;
+  for (size_t i = 0; i + 4 <= len; i++) {
+    if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n') {
+      body = buf + i;
+      break;
+    }
+  }
+  if (!body) return -1;
+  size_t header_len = (size_t)(body - buf);  /* length before \r\n\r\n */
+  body += 4;  /* first byte of binary */
+  if (header_len > 512) return -1;  /* sanity */
+  char header[520];
+  if (header_len >= sizeof(header)) return -1;
+  memcpy(header, buf, header_len);
+  header[header_len] = '\0';
+  /* Require all three (browsers may send name/filename in any order) */
+  if (!strstr(header, "form-data")) return -1;
+  if (!strstr(header, "name=\"firmware\"") && !strstr(header, "name='firmware'")) return -1;
+  if (!strstr(header, "filename=")) return -1;
+  return (int)(body - buf);
 }
 
 bool parseData(uint8_t *buffer, int ret, uint8_t **firmwareData, size_t *size) {
@@ -315,22 +398,22 @@ bool parseData(uint8_t *buffer, int ret, uint8_t **firmwareData, size_t *size) {
     return true;
   }
 
-  char *content = (char *)buffer;
-  if (strstr(content,
-             "Content-Disposition: form-data; name=\"firmware\"; filename=")) {
-    char *firmwareStart = strstr(content, "\r\n\r\n");
-    if (firmwareStart) {
-      ESP_LOGD(TAG, "Found firmware start");
-      *firmwareData = (uint8_t *)firmwareStart + 4;
-      *size = (size_t)ret - (*firmwareData - buffer);
-      binaryFound = true;
-    }
+  int off = findFirmwareStartInBuffer((const char *)buffer, (size_t)ret);
+  if (off >= 0) {
+    ESP_LOGI(TAG, "Found firmware start at offset %d", off);
+    *firmwareData = buffer + off;
+    *size = (size_t)ret - (size_t)off;
+    binaryFound = true;
   }
 
   return binaryFound;
 }
 
-void initParser() { binaryFound = false; }
+void initParser() {
+  binaryFound = false;
+  header_accum_len = 0;
+  overflow_len = 0;
+}
 
 //
 // FirmwareUpdater Class
@@ -349,28 +432,37 @@ esp_err_t FirmwareUpdater::handler(httpd_req *req) {
     case HTTP_POST: {
       ESP_LOGD(TAG, "Receiving %u bytes", req->content_len);
 
-      ESP_LOGD(TAG, "Free heap size = %lu (internal = %lu)",
-               esp_get_free_heap_size(), esp_get_free_internal_heap_size());
       otaStarted = false;
       otaFailed = false;
-      /* Delay before spawning OTA task so connection and system settle (avoids immediate reset when curl connects). */
-      vTaskDelay(pdMS_TO_TICKS(1500));
-      if (xTaskCreatePinnedToCore(otaTask, "OTA", 8 * 1024, (void *)req, 20,
-                                  &g_hOta, 1) == pdTRUE) {
-        // if (g_hOta) {
-        // esp_task_wdt_add(g_hOta);
-        /* Send a simple response */
-        while (!otaStarted && !otaFailed) {
-          vTaskDelay(pdMS_TO_TICKS(100));
-        }
-      }
-      if (otaStarted && !otaFailed) {
-        const char resp[] = "OK";
-        httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+
+      /* If no body, send message and return so browser always gets a response. */
+      if (req->content_len == 0) {
+        static const char no_body[] =
+          "<!DOCTYPE html><html><head><title>OTA</title></head><body>"
+          "<p>No file or empty upload. Please select a firmware file.</p></body></html>";
+        httpd_resp_set_status(req, "200 OK");
+        httpd_resp_set_type(req, "text/html");
+        httpd_resp_send(req, no_body, (ssize_t)sizeof(no_body) - 1);
         return ESP_OK;
       }
-      const char resp[] = "FAIL";
-      httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+
+      runOtaUpload(req);
+
+      /* If OTA failed, unregister from WDT and send one response (same as curl). */
+      if (otaFailed) {
+        TaskHandle_t self = xTaskGetCurrentTaskHandle();
+        if (self != NULL) {
+          esp_task_wdt_delete(self);
+        }
+        static const char fail_html[] =
+          "<!DOCTYPE html><html><head><title>OTA Update</title></head><body>"
+          "<p style=\"color:red;font-weight:bold;\">Transfer failed.</p></body></html>";
+        httpd_resp_set_status(req, "200 OK");
+        httpd_resp_set_type(req, "text/html");
+        httpd_resp_send(req, fail_html, (ssize_t)sizeof(fail_html) - 1);
+        return ESP_OK;
+      }
+      /* On success runOtaUpload already sent the response and restarted the device. */
       return ESP_OK;
     } break;
     default:

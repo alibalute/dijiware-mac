@@ -13,6 +13,7 @@
 #include "driver/ledc.h"
 #include "pins.h"
 #include "esp_log.h"
+#include "esp_attr.h"
 
 static const char *TAG = "Led";
 
@@ -20,7 +21,7 @@ static LedMode powerLedMode = LED_SOLID, batteryLedMode = LED_OFF;
 static uint32_t batteryVoltage = 0;
 uint8_t batteryLevel = 0;
 
-bool fadeCB(const ledc_cb_param_t *param, void *user_arg);
+bool IRAM_ATTR fadeCB(const ledc_cb_param_t *param, void *user_arg);
 
 void initLeds() {
   esp_log_level_set("ledc", ESP_LOG_WARN);
@@ -83,7 +84,7 @@ void initLeds() {
 volatile bool fading[LEDC_CHANNEL_MAX];
 volatile bool direction[LEDC_CHANNEL_MAX];
 
-bool fadeCB(const ledc_cb_param_t *param, void *user_arg) {
+bool IRAM_ATTR fadeCB(const ledc_cb_param_t *param, void *user_arg) {
   int channel = param->channel;
   direction[channel] = (direction[channel] == false);
   fading[channel] = false;

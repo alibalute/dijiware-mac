@@ -61,6 +61,12 @@ CONFIG_USB_DESC_CDC_STRING="eTar CDC Device"
 
 
 #
+# HTTP server: allow longer request headers (browser form uploads need more than 512)
+#
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=4096
+CONFIG_HTTPD_MAX_URI_LEN=1024
+
+#
 # CONSOLE
 #
 
