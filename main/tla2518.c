@@ -26,6 +26,9 @@
 #define STOP_ON_ERROR
 #define SEMAPHORE_TIMEOUT 10
 #define ADC_READ_RETRY_MAX 100
+/* Max iterations for init wait loops; avoids boot freeze if ADC never responds */
+#define TLA2518_INIT_STATUS_RETRY_MAX  500
+#define TLA2518_INIT_CAL_RETRY_MAX     1000
 
 static esp_err_t writeRegister(uint8_t register, uint8_t value);
 static esp_err_t readRegister(uint8_t register, uint8_t *value);
@@ -67,16 +70,29 @@ void tla2518_init(uint8_t hostId) {
 
   // reset device and check status
   writeRegister(GENERAL_CFG_ADDRESS, GENERAL_CFG_DEFAULT | RST_START);
-  while (ESP_OK != readTest(SYSTEM_STATUS_ADDRESS, CRC_ERR_FUSE_ERROR, CRC_ERR_FUSE_OKAY));
-  //ESP_ERROR_CHECK(readTest(SYSTEM_STATUS_ADDRESS, CRC_ERR_FUSE_ERROR, CRC_ERR_FUSE_OKAY)); //this line randomly throws error while booting, replaced it with the line above
-  // vTaskDelay(100);
+  int status_retries = 0;
+  while (ESP_OK != readTest(SYSTEM_STATUS_ADDRESS, CRC_ERR_FUSE_ERROR, CRC_ERR_FUSE_OKAY)) {
+    if (++status_retries >= TLA2518_INIT_STATUS_RETRY_MAX) {
+      ESP_LOGE(TAG, "ADC init timeout waiting for status (boot freeze avoided)");
+      break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
 
   // set all INPUT as ANALOG + start calibration
   writeRegister(GENERAL_CFG_ADDRESS,
                 GENERAL_CFG_DEFAULT | CH_RST_FORCE_AIN | CAL_START);
-  while (ESP_OK != readTest(GENERAL_CFG_ADDRESS, CAL_MASK, CAL_COMPLETE))
-    ;
-  ESP_LOGI(TAG, "Calibrated");
+  int cal_retries = 0;
+  while (ESP_OK != readTest(GENERAL_CFG_ADDRESS, CAL_MASK, CAL_COMPLETE)) {
+    if (++cal_retries >= TLA2518_INIT_CAL_RETRY_MAX) {
+      ESP_LOGE(TAG, "ADC init timeout waiting for calibration (boot freeze avoided)");
+      break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+  if (cal_retries < TLA2518_INIT_CAL_RETRY_MAX) {
+    ESP_LOGI(TAG, "Calibrated");
+  }
   // append channel ID to ADC data
   writeRegister(DATA_CFG_ADDRESS, DATA_CFG_DEFAULT | APPEND_STATUS_ID);
   // internal sampling rate to 250 kSPS (low bits: 0100) see Table 3 p.16
