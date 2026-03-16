@@ -68,7 +68,7 @@ tusb_desc_device_t midi_descriptor = {.bLength = sizeof(midi_descriptor),
 
                                       .idVendor = 0x303A,
                                       .idProduct = USB_PID,
-                                      .bcdDevice = 0x010,
+                                      .bcdDevice = 0x0100,  /* BCD 1.00 (was 0x010, invalid) */
 
                                       .iManufacturer = 0x01,
                                       .iProduct = 0x02,
@@ -81,21 +81,24 @@ tusb_desc_device_t midi_descriptor = {.bLength = sizeof(midi_descriptor),
 //     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
 // };
 static char *string_descriptors[] = {
-    // array of pointer to string descriptors
-    (char[]){0x09, 0x04}, // 0: is supported language is English (0x0409)
-    "Balute",             // 1: Manufacturer
-    "eTar 2.0",               // 2: Product
-    "12345678",           // 3: Serials, should use chip ID
+    // array of pointer to string descriptors (must have 8 entries for TinyUSB copy)
+    (char[]){0x09, 0x04}, // 0: supported language English (0x0409)
+    "EID",             // 1: Manufacturer
+    "Dijilele",           // 2: Product
+    "12345678",           // 3: Serial (use chip ID if desired)
     "",                   // 4: CDC Interface
     "",                   // 5: MSC Interface
-    "eTar MIDI",          // 6: MIDI Interface
+    "Dijilele MIDI",      // 6: MIDI Interface (required for enumeration)
+    "",                   // 7: unused, keep for USB_STRING_DESCRIPTOR_ARRAY_SIZE
 };
 
 tinyusb_config_t partial_init = {
-    .device_descriptor = &midi_descriptor, // Uses default descriptor specified in Menuconfig
+    .device_descriptor = &midi_descriptor,
     .string_descriptor = &string_descriptors,
-    .configuration_descriptor = NULL, // use default descriptor
+    .configuration_descriptor = NULL,  /* use component default (MIDI from Kconfig) */
     .external_phy = false,
+    .self_powered = false,
+    .vbus_monitor_io = -1,
 };
 
 void tud_mount_cb(void) {
@@ -114,9 +117,9 @@ void tud_umount_cb(void) {
  */
 void init_usb_serial()
 {
+  /* tinyusb_driver_install() sets descriptors and calls tusb_init() internally */
   ESP_ERROR_CHECK(tinyusb_driver_install(&partial_init));
-  tusb_init();
-  // ESP_ERROR_CHECK(tusb_cdc_acm_init(&acm_cfg));
+  /* Do not call tusb_init() again; duplicate init can break enumeration */
 }
 
 bool isUSBConnected(void) { return usbCableConnected; }
