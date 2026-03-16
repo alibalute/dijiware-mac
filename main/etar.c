@@ -579,6 +579,10 @@ void etarTask(void *pvParameters)
     vTaskDelay(pdMS_TO_TICKS(1));  /* 10 was too much, 1 causes freezing when BLE is on */
     /* Extra 1ms so BLE/idle/ADC get more CPU and freezes are reduced (both constant velocity and dynamics) */
     vTaskDelay(pdMS_TO_TICKS(1));
+    /* When BLE is connected, give the BLE stack an extra 1ms so it can drain; reduces freezes right after connect (params, MTU, GATT). */
+    if (isBLEConnected()) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+    }
   }
   ESP_LOGW(TAG, "etar task exited");
   vTaskDelete(task);
