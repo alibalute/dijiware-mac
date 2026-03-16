@@ -68,7 +68,7 @@ uint32_t prevAccVal, accVal;
 float joystickMidValue; // for vibrato joystick
 uint16_t joystickReading;
 float joyValue;
-static float joyValuePrev = 320.0; // approximate value of accelerometer when eTar is held upright
+static float joyValuePrev __attribute__((unused)) = 320.0f; // approximate value when instrument held upright
 int joyCount;
 float joystickDeflection;
 uint16_t latestPitchbends[4];
@@ -92,13 +92,13 @@ TAP tap[4] = {{false, false, REST, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false 
 // Strum Structure
 STRUM strum[4] = {
     {false, false, REST, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false},
+     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false},
     {false, false, REST, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false},
+     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false},
     {false, false, REST, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false},
+     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false},
     {false, false, REST, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false}};
+     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false}};
 
 // Setting Variables
 #ifdef membrane
@@ -625,7 +625,6 @@ void ProcessIO(void)
   // to count the number of times this function is called
   static long processIoCounter = 0;
 
-  int i;
   float tempFretADC;
 
 
@@ -1223,6 +1222,7 @@ if (processIoCounter % 10 == 0) {
 
         // Take averaged sample of frets to reduce noise
         fretSample = 0;
+        (void)fretSample;
         if (atString == STRING_FOUR)
         {
 
