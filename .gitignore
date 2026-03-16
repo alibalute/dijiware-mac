@@ -4,3 +4,5 @@ managed_components
 etar-esp32.code-workspace
 .cache
 .DS_Store
+main/*.bin
+sdkconfig.old

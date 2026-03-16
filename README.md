@@ -1,7 +1,7 @@
 # Etar ESP32 Dev Project
 
 ## Overview
-This project is an ESP-IDF based firmware for the Etar ESP32 development board. It includes components for USB, MIDI, and other hardware interfaces.
+This project is an ESP-IDF based firmware for the Dijilele ESP32 development board. It includes components for USB, MIDI, and other hardware interfaces.
 
 ## Project Structure
 

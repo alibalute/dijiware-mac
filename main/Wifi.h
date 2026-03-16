@@ -68,8 +68,8 @@ class Wifi {
   static Wifi *_instance;
 
   WifiStatus _status = INIT;
-  char _apSSID[32] = ETAR_AP_SSID; // ESP AP
-  char _apPasswd[64] = ETAR_AP_PASSWD;
+  char _apSSID[32] = DIJILELE_AP_SSID; // ESP AP
+  char _apPasswd[64] = DIJILELE_AP_PASSWD;
   // wifi_auth_mode_t _authMode = WIFI_AUTH_WPA2_WPA3_PSK;
   wifi_auth_mode_t _apAuthMode = WIFI_AUTH_WPA2_PSK;
   int _retry_num = 0;

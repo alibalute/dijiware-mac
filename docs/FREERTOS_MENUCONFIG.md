@@ -1,6 +1,6 @@
-# Recommended FreeRTOS (ESP-IDF) menuconfig for eTar
+# Recommended FreeRTOS (ESP-IDF) menuconfig for DIJILELE
 
-These settings suit the eTar firmware: real-time strum/tap detection, 1 ms loop delay, MIDI (UART + BLE), and multiple tasks with priorities 1–8.
+These settings suit the Dijilele firmware: real-time strum/tap detection, 1 ms loop delay, MIDI (UART + BLE), and multiple tasks with priorities 1–8.
 
 Run **`idf.py menuconfig`**, then go to:
 

@@ -41,7 +41,7 @@ extern "C" {
 
 
 #ifndef BLEMIDI_DEVICE_NAME
-#define BLEMIDI_DEVICE_NAME "eTar BLE"  //make sure to set the device name in lines 719 and 719 of blemidi.c
+#define BLEMIDI_DEVICE_NAME "Dijilele BLE"  //make sure to set the device name in lines 719 and 719 of blemidi.c
 #endif  
 
 #ifndef BLEMIDI_NUM_PORTS

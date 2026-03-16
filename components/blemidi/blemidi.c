@@ -147,8 +147,8 @@ static esp_ble_adv_data_t adv_data = {
     .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
 };
 
-#define MANUFACTURER_DATA "Balute"
-const char *serviceData = "eTar";
+#define MANUFACTURER_DATA "elemetnal ID"
+const char *serviceData = "Dijilele";
 
 
 void get_ble_mac_address(uint8_t* mac_address) {
@@ -752,11 +752,11 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event,
       char last_two_bytes[6];
       snprintf(last_two_bytes, sizeof(last_two_bytes), "%02x%02x", mac_address[4], mac_address[5]);
 
-      // Append the last two bytes to the device name, here eTar-
-      size_t device_name_length = strlen("eTar-");
+      // Append the last two bytes to the device name, here Dijilele-
+      size_t device_name_length = strlen("Dijilele-");
       size_t unique_device_name_length = device_name_length + sizeof(last_two_bytes);  // Length of the name plus  two bytes
       char unique_device_name[unique_device_name_length + 1];  // +1 for the null terminator
-      snprintf(unique_device_name, sizeof(unique_device_name), "%s%s", "eTar-" , last_two_bytes);
+      snprintf(unique_device_name, sizeof(unique_device_name), "%s%s", "Dijilele-" , last_two_bytes);
 
       esp_err_t set_dev_name_ret =
           esp_ble_gap_set_device_name(unique_device_name); 

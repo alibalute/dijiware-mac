@@ -2,4 +2,4 @@
 
 ver="$(head -1 version.txt)"
 
-cp build/etar.bin firmware/etar-$ver.bin
+cp build/dijilele.bin firmware/dijilele-$ver.bin

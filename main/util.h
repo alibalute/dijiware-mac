@@ -1,6 +1,6 @@
 /* 
  * File:   util.h
- * Author: BaluteInc
+ * Author: elemental ID
  *
  * Created on July 17, 2013, 3:06 PM
  */
