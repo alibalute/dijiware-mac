@@ -16,9 +16,9 @@
 
 // The type of instrument that the flash will be loaded onto
 // eTar
-//#define INST_SETAR
+#define INST_SETAR
 //#define INST_TANBOUR  //disables strings 2 and 3
-#define INST_UKULELE
+//#define INST_UKULELE
 
 #define STRUM_DERIVATIVE
 //#define STRUM_DEFLECTION
