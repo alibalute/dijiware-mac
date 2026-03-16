@@ -884,6 +884,52 @@ void tapNoteOff(TAP * tap, uint8_t c, uint8_t r) {
     }
 }
 
+/** Return fret number (0 = open) for a string given its current ADC average. Does not modify strum. */
+uint8_t getFretNumberForString(uint8_t c, float adcFretAverage) {
+    int i, noteOffset = 0;
+    float fretVoltageRatio = adcFretAverage / fretBarMaxValue[c];
+#ifdef INST_SETAR
+    for (i = 0; i < 40; i++) {
+#endif
+#ifdef INST_UKULELE
+    for (i = 0; i < 12; i++) {
+#endif
+#if defined(INST_SETAR) || defined(INST_UKULELE)
+        if (fretVoltageRatio >= fretRatio[0]) {
+            noteOffset = 0;
+            break;
+        } else if ((fretVoltageRatio > fretRatio[i + 1]) && (fretVoltageRatio <= fretRatio[i])) {
+            noteOffset = i + 1;
+            break;
+        }
+    }
+#endif
+#ifdef INST_UKULELE
+    noteOffset = noteOffset * 2;
+#endif
+#ifdef INST_SETAR
+    if (acousticSetarFretsEnabled) {
+        switch (noteOffset) {
+            case 1: case 2: noteOffset = 3; break;
+            case 5: noteOffset = 6; break;
+            case 9: noteOffset = 10; break;
+            case 11: noteOffset = 12; break;
+            case 15: noteOffset = 16; break;
+            case 19: noteOffset = 20; break;
+            case 23: noteOffset = 24; break;
+            case 25: noteOffset = 26; break;
+            case 29: noteOffset = 30; break;
+            case 33: noteOffset = 34; break;
+            case 35: noteOffset = 36; break;
+            case 37: noteOffset = 38; break;
+            case 39: noteOffset = 40; break;
+            default: break;
+        }
+    }
+#endif
+    return (uint8_t)noteOffset;
+}
+
 // if string is pressed between two frets, the lower one on the neck is picked as the note
 
 void getNote(STRUM * strum, uint8_t c) {

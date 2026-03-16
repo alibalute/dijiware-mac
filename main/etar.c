@@ -16,22 +16,45 @@
  * Port history: see version control. Original PIC main module ported to ESP32.
  */
 
+/* Use stub headers when parsing on macOS (Mach-O); ESP-IDF section attributes are invalid.
+ * Cross-compiler (xtensa-esp32s3-elf-gcc) does not define __APPLE__, so ESP32 builds are unchanged. */
+#if defined(__APPLE__)
+#define IDF_HOST_PARSING 1
+#endif
+
 #include "etar.h"
 
 #include "main.h"
+#if defined(IDF_HOST_PARSING)
+#include "freertos_host_stub.h"
+#else
+#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "midi.h"
+#endif
 #include "adc.h"
+#if defined(IDF_HOST_PARSING)
+#include "usb_host_stub.h"
+#else
 #include "usb.h"
+#endif
 #include "pic-midi.h"
 #include "util.h"
+#if defined(IDF_HOST_PARSING)
+#include "esp_host_stub.h"
+#else
 #include "esp_sleep.h"
 #include "esp_log.h"
+#endif
 #include "led.h"
 #include "interfaces.h"
 #include "common.h"
+#if defined(IDF_HOST_PARSING)
+/* driver/i2c.h uses section attributes invalid for Mach-O; pins.h stub provides i2c types. */
+/* i2c_gui.h pulls in FreeRTOS, driver/i2c.h, esp_log.h; skip for host parsing. */
+#else
 #include "driver/i2c.h"
 #include "i2c_gui.h"
+#endif
 
 static const char *TAG = "eTar";
 
@@ -320,6 +343,14 @@ bool acousticSetarFretsEnabled = false;
 
 /* Set in etarTask when (iter % FREEZE_CKPT_MOD == 0); ProcessIO logs checkpoints when true. Outside INST_* so always declared. */
 static bool s_etar_log_ckpt;
+
+/** Silences all notes (all sounds off) and sets staccatoOccured so note-ons are suppressed. */
+static void silenceAllNotesFromGesture(void)
+{
+  inputToUART(0xB0, 0x78, 0x00);  // all sounds off (CC 120)
+  midiTx(0xB, 0xB0, 0x78, 0x00);
+  staccatoOccured = true;
+}
 
 void ProcessIO(void);
 
@@ -656,19 +687,22 @@ if (processIoCounter % 10 == 0) {
 
 
 
-    //this section is for staccato
-    //if 4 frets are pressed at the same time, turn all sounds off
+    // Staccato: activate when 4 strings on the same fret are pressed (all sounds off, suppress note-ons until release)
     if (pluckedInstrument && staccatoEnable)
     {
-      bool allPressed = true;
-      for (int s = 0; s < NUM_STRINGS && allPressed; s++) {
-        if (readAndAverageString(s) >= fretBarMaxValue[s])
-          allPressed = false;
+      uint8_t frets[NUM_STRINGS];
+      bool sameFret = true;
+      for (int s = 0; s < NUM_STRINGS; s++) {
+        float adc = (float)readAndAverageString(s);
+        frets[s] = getFretNumberForString((uint8_t)s, adc);
+        if (s > 0 && frets[s] != frets[0])
+          sameFret = false;
         vTaskDelay(0);
       }
-      if (allPressed) {
-        inputToUART(0xB0, 0x78, 0x00); //all sounds off
-        midiTx(0xB, 0xB0, 0x78, 0x00); //all sounds off
+      if (sameFret && frets[0] > 0) {
+        silenceAllNotesFromGesture();
+      } else {
+        staccatoOccured = false;
       }
     }
 

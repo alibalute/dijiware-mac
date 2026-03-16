@@ -325,5 +325,8 @@ void getTapNote(TAP * tap, uint8_t c);
 
 int fretVoltageToFretNumber(float );
 
+/** Return fret number (0 = open) for a string given its current ADC average. Used e.g. for same-fret staccato detection. */
+uint8_t getFretNumberForString(uint8_t stringIndex, float adcFretAverage);
+
 
 #endif
