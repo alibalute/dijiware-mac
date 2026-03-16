@@ -43,6 +43,8 @@ extern void handleMidiMessage(uint8_t midi_status, uint8_t *remaining_message, s
 static bool buffer_read = true;
 static bool usbCableConnected = false;
 
+void setUSBCableConnected(bool connected);  /* forward decl for tud_mount_cb / tud_umount_cb */
+
 // void tinyusb_cdc_rx_callback(int itf, cdcacm_event_t *event);
 // void tinyusb_cdc_line_state_changed_callback(int itf, cdcacm_event_t *event);
 
@@ -96,7 +98,15 @@ tinyusb_config_t partial_init = {
     .external_phy = false,
 };
 
-void tud_mount_cb(void) { ESP_LOGI(TAG, "MOUNTED"); }
+void tud_mount_cb(void) {
+  ESP_LOGI(TAG, "MOUNTED");
+  setUSBCableConnected(true);  /* so vibrato and other MIDI go to USB without app sending 0xAE */
+}
+
+void tud_umount_cb(void) {
+  ESP_LOGI(TAG, "UNMOUNTED");
+  setUSBCableConnected(false);
+}
 
 /**
  * @brief init USB peripheral
