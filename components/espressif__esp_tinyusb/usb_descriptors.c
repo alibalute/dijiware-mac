@@ -182,8 +182,8 @@ enum
 
 uint8_t const descriptor_cfg_kconfig[] = {
     // Configuration number, interface count, string index, total length, attribute, power in 2mA units
-    // Use 50 (=100mA) and no Remote Wakeup so Android hosts accept the device (many limit OTG current)
-    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, TUSB_DESC_TOTAL_LEN, 0x80, 50),
+    // Original values: Remote Wakeup, 100 (=200mA). Changing these broke Android app visibility.
+    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
 
 #if CFG_TUD_CDC
     // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
