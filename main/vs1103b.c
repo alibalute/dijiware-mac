@@ -17,6 +17,8 @@
 
 #define DEBUG_LEVEL ESP_LOG_INFO
 #define SEMAPHORE_TIMEOUT 20
+/* Max iterations waiting for synth to leave reset; avoids boot freeze if VS1103 never responds */
+#define VS1103B_RESET_POLL_MAX  500
 
 //#define SINE_WAVE_TEST        // start tests
 #define SINE_WAVE_FREQ 3      // (0-7) wave frequency
@@ -94,8 +96,13 @@ void vs1103b_resetAudio(void) {
 
   uint16_t smDefault;
   // ensure RESET happened
+  int reset_poll = 0;
   while (ESP_OK != readRegister(SCI_MODE, &value) ||
          ((value & SM_RESET) != 0)) {
+    if (++reset_poll >= VS1103B_RESET_POLL_MAX) {
+      ESP_LOGE(TAG, "Synth reset poll timeout (boot freeze avoided)");
+      break;
+    }
     vTaskDelay(pdMS_TO_TICKS(1));
   }
   smDefault = value; // save default value
