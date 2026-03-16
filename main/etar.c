@@ -336,8 +336,8 @@ uint8_t reverseBit(uint8_t);
  */
 void timer_check(void)
 {
-  // if connected to USB don't go to sleep
-  if (isUSBConnected())
+  // if connected to USB or BLE don't go to sleep (light sleep with BLE connected causes freeze)
+  if (isUSBConnected() || isBLEConnected())
   {
     idleTimer = millis();
   }
@@ -1484,6 +1484,10 @@ void checkSleep()
   // the first strum is changed or not. if changed, gets out of sleep mode and
   // returns from  checkSleep() function to do ProcessIO(), if no strum, gets
   // back to sleep again.
+  /* Do not enter light sleep when BLE is connected; it freezes the device. */
+  if (isBLEConnected()) {
+    return;
+  }
   if (/* false && */ ((millis() - idleTimer) >= (60000UL * SLEEP_DELAY_MINUTES))) //60000 is one minute wich is multiplied by SLEEP_DELAY_MINUTES
   {
     ESP_LOGD(TAG, "Sleep mode");
