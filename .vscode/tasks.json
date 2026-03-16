@@ -1,0 +1,32 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ESP-IDF: Build (5.0.2)",
+      "type": "shell",
+      "command": "/bin/bash -lc 'unset IDF_PATH IDF_PYTHON_ENV_PATH; export IDF_PATH=/Users/dijilele/esp/v5.0.2/esp-idf; export IDF_PYTHON_ENV_PATH=/Users/dijilele/.espressif/python_env/idf5.0_py3.11_env; export PATH=/Users/dijilele/.espressif/tools/ninja/1.10.2:/Users/dijilele/.espressif/python_env/idf5.0_py3.11_env/bin:/Users/dijilele/esp/v5.0.2/esp-idf/tools:$PATH; cd ${workspaceFolder} && idf.py build'",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$gcc"],
+      "detail": "Build with ESP-IDF 5.0.2 (idf.py build)"
+    },
+    {
+      "label": "ESP-IDF: Flash (5.0.2)",
+      "type": "shell",
+      "command": "/bin/bash -lc 'source /Users/dijilele/esp/v5.0.2/esp-idf/export.sh && cd ${workspaceFolder} && idf.py -p /dev/tty.usbserial-FT6DXO0D flash'",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "group": "none",
+      "problemMatcher": ["$gcc"],
+      "detail": "Flash with ESP-IDF 5.0.2"
+    }
+  ]
+}
