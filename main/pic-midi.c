@@ -1,14 +1,14 @@
 #include "main.h"
-#include "midi.h"
 #include "util.h"
-// #include "adc.h"
-#include "usb.h"
 #include "pic-midi.h"
 #include "usbmidi.h"
 #include "esp_log.h"
-#include "interfaces.h"
+#if defined(__APPLE__) || defined(IDF_HOST_PARSING)
+#include "freertos_host_stub.h"
+#else
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#endif
 #include <math.h>
 
 static const char *TAG = "pic-midi";

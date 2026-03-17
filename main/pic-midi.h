@@ -15,6 +15,9 @@
 #ifndef MIDI_H_GUARD
 #define MIDI_H_GUARD
 
+/* STRUM and TAP types for function declarations below */
+#include "etar.h"
+
 //not of these macros is used anywhere in the code base but they throw errors so they are commented out
 
 // #define MIDI_CIN_MISC_FUNCTION_RESERVED         0x0

@@ -630,8 +630,8 @@ void ProcessIO(void)
   if (s_etar_log_ckpt) {
     ESP_LOGI(TAG, "freeze ckpt D ProcessIO entry");
   }
-  /* Give other tasks 1ms before doing any work to reduce freezes (both constant velocity and dynamics) */
-  vTaskDelay(pdMS_TO_TICKS(1));
+  /* Yield only (no block) so strum sampling can keep up with 2ms timer; main loop still does 2ms delay after ProcessIO */
+  vTaskDelay(0);
 
   /**
       Variables
@@ -661,20 +661,6 @@ void ProcessIO(void)
 
 
 
-//every 10 other loops check if no fret is pressed on a string, calibrate that string
-if (processIoCounter % 10 == 0) {
-  for (int m = 0; m < NUM_STRINGS; m++) {
-    tempFretADC = (float)readAndAverageString(m);
-    if (fretBarMaxValue[m] - tempFretADC < STRING_DRIFT_THRESHOLD) {
-      fretBarMaxValue[m] = tempFretADC;
-    }
-    vTaskDelay(0);  /* yield after each string ADC read to avoid freezes */
-  }
-  }
-  if (s_etar_log_ckpt) {
-    ESP_LOGI(TAG, "freeze ckpt E after drift");
-  }
-
   /**
       Strum & Tap Detection / Note Generation
    **/
@@ -683,30 +669,6 @@ if (processIoCounter % 10 == 0) {
     strumDetectionEnabled = false;
     processIoCounter++;
     vTaskDelay(0);  /* yield before heavy ProcessIO work to reduce freezes */
-
-
-
-
-    // Staccato: activate when 4 strings on the same fret are pressed (all sounds off, suppress note-ons until release)
-    if (pluckedInstrument && staccatoEnable)
-    {
-      uint8_t frets[NUM_STRINGS];
-      bool sameFret = true;
-      for (int s = 0; s < NUM_STRINGS; s++) {
-        float adc = (float)readAndAverageString(s);
-        frets[s] = getFretNumberForString((uint8_t)s, adc);
-        if (s > 0 && frets[s] != frets[0])
-          sameFret = false;
-        vTaskDelay(0);
-      }
-      if (sameFret && frets[0] > 0) {
-        silenceAllNotesFromGesture();
-      } else {
-        staccatoOccured = false;
-      }
-    }
-
-
 
     // //this section is for staccato
     // if (pluckedInstrument && staccatoEnable)
@@ -760,8 +722,9 @@ if (processIoCounter % 10 == 0) {
       //read 2 samples of the strum sensor, tried more samples causes lag
       strumSample = readAndAverageStrum(atString) + readAndAverageStrum(atString);
       strumSample /= 2;
-      /* getSample() now yields after each read; extra yield here keeps 4 strings from stacking 8 reads before scheduler run */
-      vTaskDelay(0);
+      /* yield every 2 strings to reduce context switches during fast strumming */
+      if (atString == 1 || atString == 3)
+        vTaskDelay(0);
 
       if (strumSample > (uint32_t)potMidValue[atString])
       {
@@ -1406,6 +1369,50 @@ if (processIoCounter % 10 == 0) {
       }
 
     } // Main for loop for strumming
+
+    // Staccato: only when enabled; then run only when no string in strum and every 2nd tick to avoid dropped notes
+    if (staccatoEnable && pluckedInstrument)
+    {
+      bool anyInStrum = strum[0].inStrum || strum[1].inStrum || strum[2].inStrum || strum[3].inStrum;
+      if (!anyInStrum && (processIoCounter % 2 == 0))
+      {
+        float adc[NUM_STRINGS];
+        bool allPressed = true;
+        for (int s = 0; s < NUM_STRINGS; s++) {
+          adc[s] = (float)readAndAverageString(s);
+          if (adc[s] >= fretBarMaxValue[s])
+            allPressed = false;
+        }
+        vTaskDelay(0);  /* single yield after 4 reads */
+        if (allPressed) {
+          uint8_t frets[NUM_STRINGS];
+          bool sameFret = true;
+          for (int s = 0; s < NUM_STRINGS; s++) {
+            frets[s] = getFretNumberForString((uint8_t)s, adc[s]);
+            if (s > 0 && frets[s] != frets[0])
+              sameFret = false;
+          }
+          if (sameFret && frets[0] > 0) {
+            silenceAllNotesFromGesture();
+          } else {
+            staccatoOccured = false;
+          }
+        } else {
+          staccatoOccured = false;
+        }
+      }
+    }
+
+    /* String drift calibration: after strum work so it never delays strum detection */
+    if (processIoCounter % 100 == 0) {
+      for (int m = 0; m < NUM_STRINGS; m++) {
+        tempFretADC = (float)readAndAverageString(m);
+        if (fretBarMaxValue[m] - tempFretADC < STRING_DRIFT_THRESHOLD) {
+          fretBarMaxValue[m] = tempFretADC;
+        }
+        vTaskDelay(0);
+      }
+    }
   }   // Strum Detection enabled
   if (s_etar_log_ckpt) {
     ESP_LOGI(TAG, "freeze ckpt F after strum loop");
