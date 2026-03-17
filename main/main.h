@@ -12,12 +12,19 @@
 #ifndef __MAIN_H_
 #define __MAIN_H_
 
+#if defined(__APPLE__) || defined(IDF_HOST_PARSING)
+/* Minimal stub for macOS/host parsing; avoid including any ESP-IDF headers
+ * that use section attributes invalid for Mach-O. */
+#include "etar.h"
+typedef int gpio_num_t;
+#else
 #include "pins.h"
 #include "adc.h"
 #include "gpio.h"
 #include "i2c_adc.h"
 #include "spi.h"
 #include "etar.h"
+#endif
 
 #ifndef ABS
 #define ABS(a,b) ((a>b)?(a-b):(b-a))

@@ -15,8 +15,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "pins.h"
+#if defined(__APPLE__) || defined(IDF_HOST_PARSING)
+typedef int esp_err_t;
+#else
 #include "driver/i2c.h"
 #include "esp_err.h"
+#endif
 
 enum {
   AD7994_CONVERSION_RESULT_REGISTER,

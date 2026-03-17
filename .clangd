@@ -1,5 +1,11 @@
 CompileFlags:
   CompilationDatabase: build
+  Add:
+    - -D__XTENSA__
+    - -DIDF_HOST_PARSING=1
+    - -I/Users/dijilele/esp/v5.0.2/esp-idf/components/xtensa/include
+    # Newlib headers (e.g. sys/reent.h) when compile_commands.json is missing
+    - -isystem/Users/dijilele/.espressif/tools/xtensa-esp32s3-elf/esp-2022r1-11.2.0/xtensa-esp32s3-elf/xtensa-esp32s3-elf/include
   Remove:
     - -mlongcalls
     - -fstrict-volatile-bitfields

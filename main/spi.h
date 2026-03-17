@@ -12,9 +12,14 @@
 #ifndef __SPI_H_
 #define __SPI_H_
 
+#include "pins.h"
+#if defined(__APPLE__) || defined(IDF_HOST_PARSING)
+#include <stdint.h>
+#define SPI2_HOST 2
+#else
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
-#include "pins.h"
+#endif
 
 #define HOST_ID SPI2_HOST
 

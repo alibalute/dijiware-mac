@@ -143,6 +143,10 @@ uint16_t readAccelerometer(void) {
   return acc;
 }
 
+void readAccelerometerXY(int16_t *out_x, int16_t *out_y) {
+  get_acceleration_xy(out_x, out_y);
+}
+
 uint16_t readAndAverageAccelerometer(bool filtered) {
   return get_acceleration();
   // return 0;

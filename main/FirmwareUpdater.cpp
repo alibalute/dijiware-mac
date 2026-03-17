@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#if !defined(__APPLE__)
 #include "esp_flash_partitions.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -26,6 +27,9 @@
 #include "esp_app_format.h"
 #include "esp_task_wdt.h"
 #include "ota_debug.h"
+#endif
+
+#if !defined(__APPLE__)
 
 #define BUFFER_SIZE 2048
 #define HEADER_ACCUM_MAX 2048
@@ -379,7 +383,7 @@ static void runOtaUpload(httpd_req_t *req) {
   static const char success_html[] =
     "<!DOCTYPE html><html><head><title>OTA Update</title></head><body>"
     "<p style=\"color:green;font-weight:bold;\">Transfer complete successfully.</p>"
-    "<p>Device will restart in 8 seconds...</p></body></html>";
+    "<p>Turn on the Dijilele after it shuts down...</p></body></html>";
   httpd_resp_set_status(req, "200 OK");
   httpd_resp_set_type(req, "text/html");
   httpd_resp_send(req, success_html, (ssize_t)sizeof(success_html) - 1);
@@ -507,3 +511,24 @@ esp_err_t FirmwareUpdater::handler(httpd_req *req) {
       return ESP_FAIL;
   }
 }
+
+#else  /* __APPLE__: stubs for macOS host parsing (Mach-O rejects ESP-IDF section attributes) */
+
+bool parseData(uint8_t *buffer, int ret, uint8_t **firmwareData, size_t *size) {
+  (void)buffer;
+  (void)ret;
+  (void)firmwareData;
+  (void)size;
+  return false;
+}
+
+void initParser(void) {}
+
+FirmwareUpdater::FirmwareUpdater() {}
+
+esp_err_t FirmwareUpdater::handler(httpd_req *req) {
+  (void)req;
+  return 0;
+}
+
+#endif  /* !__APPLE__ */

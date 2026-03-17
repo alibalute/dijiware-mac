@@ -51,7 +51,7 @@ extern bool isUSBConnected(void);
 /** Set by etarTask when the boot intro notes have finished; main task waits for this before loading settings so MIDI does not interleave and cause spurious notes. */
 extern volatile bool boot_intro_done;
 
-static bool i2c_gui_initialized = false;
+static bool i2c_gui_initialized __attribute__((unused)) = false;
 
 extern bool inSleepMode;
 
@@ -100,7 +100,7 @@ static void timerTask(void *pvParameter) {
 
  #define I2C_SLAVE_ADDRESS 0x50
 
-static esp_err_t i2c_slave_init()
+static esp_err_t __attribute__((unused)) i2c_slave_init(void)
 {
     i2c_config_t conf;
     conf.mode = I2C_MODE_SLAVE;
@@ -232,7 +232,7 @@ void volumeTask(void *pvParamter) {
   /* Retry setVolume so no-sound boot is less likely if first SPI fails */
   bool volumeSetOk = false;
   for (int retry = 0; retry < 3; retry++) {
-    if (setVolume(newVolume, false /* usingHeadPhone */) == ESP_OK) {
+    if (setVolume(newVolume, usingHeadPhone) == ESP_OK) {
       volumeSetOk = true;
       if (retry > 0) ESP_LOGI(TAG, "Volume set OK on attempt %d", retry + 1);
       break;
@@ -289,7 +289,7 @@ void volumeTask(void *pvParamter) {
         if (currentVolume <= 8 || vol < 2) {
           vol = 0;
         }
-        setVolume(vol, false /* usingHeadPhone */);
+        setVolume(vol, usingHeadPhone);
       }
     }
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -445,7 +445,7 @@ void cmdButtonCB(uint32_t duration) {
 
 void buttonsTask(void *pvParam) {
   static bool pwrPressed = false, cmdPressed = false;
-  static bool poweringOff = false, resetting = false;
+  static bool poweringOff = false, resetting __attribute__((unused)) = false;
   static uint32_t pwrTS = 0, cmdTS = 0, pwrDuration = 0, cmdDuration = 0;
   static uint32_t pwrFirstReleaseTS = 0;  /* for double-click detect: time of first short release, 0 = not waiting */
   uint32_t now = millis();
@@ -754,7 +754,7 @@ void app_main(void) {
   esp_log_level_set("util", ESP_LOG_DEBUG);
 
 
-  const esp_app_desc_t *appDesc = esp_ota_get_app_description();
+  const esp_app_desc_t *appDesc = esp_app_get_description();
   strcpy(appVersion, appDesc->version);
   ESP_LOGD(TAG, "App version %s", appVersion);
 

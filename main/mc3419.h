@@ -73,6 +73,7 @@ enum {
 
 extern void mc3419_init(uint8_t hostId);
 extern uint16_t get_acceleration(void);
+extern void get_acceleration_xy(int16_t *out_x, int16_t *out_y);
 
 // extern void sampleChannels(uint8_t channels);
 #endif // __MC3419_H_

@@ -12,11 +12,24 @@
 #ifndef __ADC_H_
 #define __ADC_H_
 
+#if defined(__APPLE__) || defined(IDF_HOST_PARSING)
+/* Stub for macOS host parsing; ESP-IDF headers use section attributes invalid for Mach-O. */
+#include <stdint.h>
+#include <stdbool.h>
+#ifndef CONFIG_IDF_TARGET_ESP32S3
+#define CONFIG_IDF_TARGET_ESP32S3 1
+#endif
+#define ADC_WIDTH_BIT_12 12
+#define ESP_ADC_CAL_VAL_EFUSE_VREF 0
+#define ESP_ADC_CAL_VAL_EFUSE_TP 1
+#define ESP_ADC_CAL_VAL_EFUSE_TP_FIT 2
+#else
 #include "esp_log.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 // #include "esp_adc_cal.h"
+#endif
 
 #define ADC_MAX_VOLTAGE_ATTEN_DB_0 950
 #define ADC_MAX_VOLTAGE_ATTEN_DB_2_5 1250
@@ -29,7 +42,9 @@
 #define ADC_SAMPLES 16
 
 // ADC Calibration
-#if CONFIG_IDF_TARGET_ESP32
+#if defined(__APPLE__) || defined(IDF_HOST_PARSING)
+#define ADC_EXAMPLE_CALIBRATION_SCHEME ESP_ADC_CAL_VAL_EFUSE_TP_FIT
+#elif CONFIG_IDF_TARGET_ESP32
 #define ADC_EXAMPLE_CALIBRATION_SCHEME ESP_ADC_CAL_VAL_EFUSE_VREF
 #elif CONFIG_IDF_TARGET_ESP32S2
 #define ADC_EXAMPLE_CALIBRATION_SCHEME ESP_ADC_CAL_VAL_EFUSE_TP
@@ -113,6 +128,7 @@ enum {
 extern void adc_calibration_init(void);
 extern uint16_t readBattery(void);
 extern uint16_t readAccelerometer(void);
+extern void readAccelerometerXY(int16_t *out_x, int16_t *out_y);
 extern uint16_t readAndAverageAccelerometer(bool filtered);
 extern uint16_t readAndAverageStrum(int position);
 extern uint16_t readAndAverageString(int position);

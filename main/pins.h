@@ -12,9 +12,51 @@
 #ifndef __PINS_H_
 #define __PINS_H_
 
+#if defined(__APPLE__) || defined(IDF_HOST_PARSING)
+/* Stub types for macOS host parsing; ESP-IDF section attributes are invalid for Mach-O. */
+typedef int gpio_num_t;
+typedef int i2c_port_t;
+#define GPIO_NUM_0    ((gpio_num_t)0)
+#define GPIO_NUM_1    ((gpio_num_t)1)
+#define GPIO_NUM_2    ((gpio_num_t)2)
+#define GPIO_NUM_3    ((gpio_num_t)3)
+#define GPIO_NUM_4    ((gpio_num_t)4)
+#define GPIO_NUM_5    ((gpio_num_t)5)
+#define GPIO_NUM_6    ((gpio_num_t)6)
+#define GPIO_NUM_7    ((gpio_num_t)7)
+#define GPIO_NUM_8    ((gpio_num_t)8)
+#define GPIO_NUM_9    ((gpio_num_t)9)
+#define GPIO_NUM_10   ((gpio_num_t)10)
+#define GPIO_NUM_11   ((gpio_num_t)11)
+#define GPIO_NUM_12   ((gpio_num_t)12)
+#define GPIO_NUM_13   ((gpio_num_t)13)
+#define GPIO_NUM_14   ((gpio_num_t)14)
+#define GPIO_NUM_15   ((gpio_num_t)15)
+#define GPIO_NUM_16   ((gpio_num_t)16)
+#define GPIO_NUM_17   ((gpio_num_t)17)
+#define GPIO_NUM_18   ((gpio_num_t)18)
+#define GPIO_NUM_21   ((gpio_num_t)21)
+#define GPIO_NUM_35   ((gpio_num_t)35)
+#define GPIO_NUM_36   ((gpio_num_t)36)
+#define GPIO_NUM_37   ((gpio_num_t)37)
+#define GPIO_NUM_38   ((gpio_num_t)38)
+#define GPIO_NUM_39   ((gpio_num_t)39)
+#define GPIO_NUM_40   ((gpio_num_t)40)
+#define GPIO_NUM_41   ((gpio_num_t)41)
+#define GPIO_NUM_42   ((gpio_num_t)42)
+#define GPIO_NUM_45   ((gpio_num_t)45)
+#define GPIO_NUM_46   ((gpio_num_t)46)
+#define GPIO_NUM_47   ((gpio_num_t)47)
+#define GPIO_NUM_48   ((gpio_num_t)48)
+#define ADC_UNIT_1    1
+#define ADC_UNIT_2    2
+#define ADC_CHANNEL_0 0
+#define ADC_CHANNEL_1 1
+#else
 #include "driver/gpio.h"
 #include "hal/adc_types.h"
 #include "driver/i2c.h"
+#endif
 
 
 // --- I/O Expander

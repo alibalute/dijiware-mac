@@ -83,13 +83,23 @@ void mc3419_init(uint8_t hostId) {
 
 /**
  * @brief return Z accelerometer value
- * 
- * @return uint32_t 
+ *
+ * @return uint16_t
  */
 uint16_t get_acceleration(void) {
   uint8_t buffer[2] = {0,0};
   readRegisterBurst(ZOUT_EX_L, buffer, sizeof(buffer));
-  return (uint16_t)( (buffer[1] << 8 )+ buffer[0]);
+  return (uint16_t)((buffer[1] << 8) + buffer[0]);
+}
+
+/**
+ * @brief Read X and Y accelerometer values (for x-y plane rotation / twist gesture).
+ */
+void get_acceleration_xy(int16_t *out_x, int16_t *out_y) {
+  uint8_t buf[4];
+  readRegisterBurst(XOUT_EX_L, buf, sizeof(buf));
+  *out_x = (int16_t)((uint16_t)buf[1] << 8 | buf[0]);
+  *out_y = (int16_t)((uint16_t)buf[3] << 8 | buf[2]);
 }
 
 esp_err_t readTest(uint8_t reg, uint8_t bitmask) {

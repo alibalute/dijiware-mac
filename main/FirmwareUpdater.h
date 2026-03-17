@@ -12,7 +12,16 @@
 #ifndef __FIRMWAREUPDATER_H
 #define __FIRMWAREUPDATER_H
 
+#include <stddef.h>
+#include <stdint.h>
+
+#if defined(__APPLE__)
+/* Stub types for macOS host parsing; ESP-IDF section attributes are invalid for Mach-O. */
+typedef struct httpd_req { char _dummy; } httpd_req;
+typedef int esp_err_t;
+#else
 #include "esp_http_server.h"
+#endif
 
 #ifndef MIN
 #define MIN(a, b) ((a < b) ? a : b)
