@@ -80,8 +80,11 @@ MIDI_DATA midi1;
 // Received Bluetooth Data buffer
 uint8_t btBuffer[2];
 
-// The ADC value of the strum POT in the middle at reset
+// The ADC value of the strum POT in the middle at reset (drifts toward actual rest when at rest)
 float potMidValue[4];
+/* When deflection (currentSampleN) is below this, we consider the bar at rest and nudge potMidValue toward current reading */
+#define STRUM_CENTER_REST_THRESH  60
+#define STRUM_CENTER_ALPHA        0.03f
 
 // Accelerometer Values
 uint32_t accel_z;
@@ -245,9 +248,9 @@ uint8_t derivativeThreshold = 100 ; // 66; // by experiment, the derivative of s
                                   //   strum be to turn the note on or off
 int derivativeReturnThreshold = -36 ; // -18; // -9;
 uint8_t strumStartThreshold =
-    180; // was 15// How far a strum must go before we start reading it
+    180; // How far (deflection) a strum must go before note-on (STRUM_DEFLECTION)
 uint8_t strumReturnThreshold =
-    170; // was 12 // How far the strum must return before we finish reading it
+    140; // How far it must return before note-off; lower than start = hysteresis so note-off doesn't need perfect centering
 uint8_t tappingDebounceNum =
     1; // number of samples to take for tap debouncing (Hammer On Delay)
 
@@ -304,9 +307,9 @@ uint8_t derivativeThreshold = 100;//66; // by experiment, the derivative of stru
                                   //   strum be to turn the note on or off
 int derivativeReturnThreshold = -36; // -18; // -9;
 uint8_t strumStartThreshold =
-    180; // was 15// How far a strum must go before we start reading it
+    180; // How far (deflection) a strum must go before note-on (STRUM_DEFLECTION)
 uint8_t strumReturnThreshold =
-    170; // was 12 // How far the strum must return before we finish reading it
+    140; // How far it must return before note-off; lower than start = hysteresis so note-off doesn't need perfect centering
 uint8_t tappingDebounceNum =
     1; // number of samples to take for tap debouncing (Hammer On Delay)
 
@@ -776,7 +779,11 @@ void ProcessIO(void)
       strum[atString].preSampleN2 = strum[atString].preSampleN1;
       strum[atString].preSampleN1 = strum[atString].currentSampleN;
 
-
+      /* Dynamic strum center: when bar is at rest, drift potMidValue toward actual reading so deflection mode works without perfect mechanical centering */
+      if (!strum[atString].inStrum && strum[atString].currentSampleN < STRUM_CENTER_REST_THRESH) {
+        float s = (float)strumSample;
+        potMidValue[atString] += STRUM_CENTER_ALPHA * (s - potMidValue[atString]);
+      }
 
 
 

@@ -20,8 +20,9 @@
 //#define INST_TANBOUR  //disables strings 2 and 3
 //#define INST_UKULELE
 
-#define STRUM_DERIVATIVE
-//#define STRUM_DEFLECTION
+//#define STRUM_DERIVATIVE
+/* Option: STRUM_DEFLECTION = deflection threshold (note-on/off by position). Dynamic center + hysteresis in etar.c make it viable. */
+#define STRUM_DEFLECTION
 
 #define PCB_V2_2
 //#define PCB_V2_3
