@@ -26,6 +26,10 @@
 #define STOP_ON_ERROR
 #define SEMAPHORE_TIMEOUT 10
 #define ADC_READ_RETRY_MAX 100
+/* Log before/after each SPI call to pinpoint which call hangs (set tla2518 to DEBUG). */
+#define TLA2518_SPI_HANG_DIAG 1
+/* Max wait for any single SPI transaction; prevents etarTask from blocking forever if SPI hangs. */
+#define SPI_TRANS_TIMEOUT_MS 50
 /* Max iterations for init wait loops; avoids boot freeze if ADC never responds */
 #define TLA2518_INIT_STATUS_RETRY_MAX  500
 #define TLA2518_INIT_CAL_RETRY_MAX     1000
@@ -49,6 +53,7 @@ static const spi_device_interface_config_t devConfig = {
 
 static spi_device_handle_t devHandle;
 
+/* ADC semaphore: only tla2518.c take/give; only callers of getSample (adc.c readAndAverageStrum/String) are etar.c and util.c (calibration from etar/checkSleep). No other tasks use xADCSemaphore — deadlock from another task unlikely. */
 extern SemaphoreHandle_t xADCSemaphore;
 
 uint16_t adcValues[NUM_ADC_CHANNELS];
@@ -230,7 +235,7 @@ void sampleChannels(uint8_t channelMask) {
 
 esp_err_t writeRegister(uint8_t reg, uint8_t value) {
   if (xSemaphoreTake(xADCSemaphore, SEMAPHORE_TIMEOUT) == pdFALSE) {
-    ESP_LOGE(TAG, "Failed to obtain Semaphore");
+    ESP_LOGW(TAG, "ADC semaphore timeout (freeze diag): writeRegister reg=%02x", reg);
     return ESP_FAIL;
   }
 
@@ -246,7 +251,21 @@ esp_err_t writeRegister(uint8_t reg, uint8_t value) {
   transaction.rx_buffer = rx_buffer;
   transaction.tx_buffer = tx_buffer;
   transaction.flags = 0;   // SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA;
-  ret = spi_device_transmit(devHandle, &transaction);
+#if TLA2518_SPI_HANG_DIAG
+  ESP_LOGD(TAG, "freeze diag: before spi write reg=%02x", reg);
+#endif
+  ret = spi_device_queue_trans(devHandle, &transaction, portMAX_DELAY);
+  if (ret == ESP_OK) {
+    spi_transaction_t *rtrans = NULL;
+    ret = spi_device_get_trans_result(devHandle, &rtrans, pdMS_TO_TICKS(SPI_TRANS_TIMEOUT_MS));
+    if (ret == ESP_ERR_TIMEOUT) {
+      ESP_LOGW(TAG, "SPI transaction timeout write reg=%02x (freeze avoided)", reg);
+      ret = ESP_ERR_TIMEOUT;
+    }
+  }
+#if TLA2518_SPI_HANG_DIAG
+  ESP_LOGD(TAG, "freeze diag: after spi write reg=%02x", reg);
+#endif
   if (ret == ESP_OK) {
 #if DEBUG_WRITE == 1
     ESP_LOGD(TAG, "wrote reg %02x = %02x", reg, value);
@@ -263,7 +282,7 @@ esp_err_t writeRegister(uint8_t reg, uint8_t value) {
 
 esp_err_t readRegister(uint8_t reg, uint8_t *value) {
   if (xSemaphoreTake(xADCSemaphore, SEMAPHORE_TIMEOUT) == pdFALSE) {
-    ESP_LOGE(TAG, "Failed to obtain Semaphore");
+    ESP_LOGW(TAG, "ADC semaphore timeout (freeze diag): readRegister reg=%02x", reg);
     return ESP_FAIL;
   }
 
@@ -279,22 +298,49 @@ esp_err_t readRegister(uint8_t reg, uint8_t *value) {
   transaction.rx_buffer = rx_buffer;
   transaction.tx_buffer = tx_buffer;
   transaction.flags = 0; //SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA;
-  ret = spi_device_transmit(devHandle, &transaction);
+#if TLA2518_SPI_HANG_DIAG
+  ESP_LOGD(TAG, "freeze diag: before spi read cmd reg=%02x", reg);
+#endif
+  ret = spi_device_queue_trans(devHandle, &transaction, portMAX_DELAY);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "err %d (%04x) on read reg %02x", ret, ret, reg);
     xSemaphoreGive(xADCSemaphore);
     return ret;
   }
-  // transaction.tx_data[0] = 0;
-  // transaction.tx_data[1] = 0;
-  // transaction.tx_data[2] = 0;
-  // transaction.rx_data[0] = 0xff;
-  // transaction.rx_data[1] = 0xff;
-  // transaction.rx_data[2] = 0xff;
+  spi_transaction_t *rtrans = NULL;
+  ret = spi_device_get_trans_result(devHandle, &rtrans, pdMS_TO_TICKS(SPI_TRANS_TIMEOUT_MS));
+  if (ret == ESP_ERR_TIMEOUT) {
+    ESP_LOGW(TAG, "SPI transaction timeout read cmd reg=%02x (freeze avoided)", reg);
+    xSemaphoreGive(xADCSemaphore);
+    return ESP_ERR_TIMEOUT;
+  }
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "err %d (%04x) on read reg %02x", ret, ret, reg);
+    xSemaphoreGive(xADCSemaphore);
+    return ret;
+  }
   transaction.length = 3 * 8;
   transaction.rxlength = 3 * 8;
   transaction.flags = 0;  // SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA;
-  ret = spi_device_polling_transmit(devHandle, &transaction);
+#if TLA2518_SPI_HANG_DIAG
+  ESP_LOGD(TAG, "freeze diag: before spi read data reg=%02x", reg);
+#endif
+  ret = spi_device_queue_trans(devHandle, &transaction, portMAX_DELAY);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "err %d (%04x) on read reg %02x", ret, ret, reg);
+    xSemaphoreGive(xADCSemaphore);
+    return ret;
+  }
+  rtrans = NULL;
+  ret = spi_device_get_trans_result(devHandle, &rtrans, pdMS_TO_TICKS(SPI_TRANS_TIMEOUT_MS));
+  if (ret == ESP_ERR_TIMEOUT) {
+    ESP_LOGW(TAG, "SPI transaction timeout read data reg=%02x (freeze avoided)", reg);
+    xSemaphoreGive(xADCSemaphore);
+    return ESP_ERR_TIMEOUT;
+  }
+#if TLA2518_SPI_HANG_DIAG
+  ESP_LOGD(TAG, "freeze diag: after spi read reg=%02x", reg);
+#endif
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "err %d (%04x) on read reg %02x", ret, ret, reg);
   } else {
@@ -310,8 +356,11 @@ esp_err_t readRegister(uint8_t reg, uint8_t *value) {
 }
 
 esp_err_t readSample(uint16_t *value, uint8_t *channel) {
+#if TLA2518_SPI_HANG_DIAG
+  ESP_LOGD(TAG, "freeze diag: readSample entry");
+#endif
   if (xSemaphoreTake(xADCSemaphore, SEMAPHORE_TIMEOUT) == pdFALSE) {
-    ESP_LOGE(TAG, "Failed to obtain Semaphore");
+    ESP_LOGW(TAG, "ADC semaphore timeout (freeze diag): readSample");
     return ESP_FAIL;
   }
 
@@ -331,7 +380,22 @@ esp_err_t readSample(uint16_t *value, uint8_t *channel) {
   transaction.rx_buffer = rx_buffer;
   transaction.tx_buffer = tx_buffer;
   transaction.flags = 0; // SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA;
-  ret = spi_device_polling_transmit(devHandle, &transaction);
+#if TLA2518_SPI_HANG_DIAG
+  ESP_LOGD(TAG, "freeze diag: before spi readSample");
+#endif
+  ret = spi_device_queue_trans(devHandle, &transaction, portMAX_DELAY);
+  if (ret == ESP_OK) {
+    spi_transaction_t *rtrans = NULL;
+    ret = spi_device_get_trans_result(devHandle, &rtrans, pdMS_TO_TICKS(SPI_TRANS_TIMEOUT_MS));
+    if (ret == ESP_ERR_TIMEOUT) {
+      ESP_LOGW(TAG, "SPI transaction timeout readSample (freeze avoided)");
+      xSemaphoreGive(xADCSemaphore);
+      return ESP_ERR_TIMEOUT;
+    }
+  }
+#if TLA2518_SPI_HANG_DIAG
+  ESP_LOGD(TAG, "freeze diag: after spi readSample");
+#endif
   if (ret == ESP_OK) {
 #if DEBUG_SAMPLE == 2
     ESP_LOGD(TAG, "sample_buffer:");
