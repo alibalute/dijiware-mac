@@ -20,12 +20,15 @@
 //#define INST_TANBOUR  //disables strings 2 and 3
 //#define INST_UKULELE
 
-//#define STRUM_DERIVATIVE
+#define STRUM_DERIVATIVE
 /* Option: STRUM_DEFLECTION = deflection threshold (note-on/off by position). Dynamic center + hysteresis in etar.c make it viable. */
-#define STRUM_DEFLECTION
+//#define STRUM_DEFLECTION
 
 #define PCB_V2_2
 //#define PCB_V2_3
+
+/** FreeRTOS priority for eTar (ADC/SPI hot path). Raised above WiFi/buttons (6) to reduce BLE-related scheduling delays; stay below Bluedroid (~19). */
+#define ETAR_TASK_PRIORITY 12
 
 #define HALF_CIRCUIT_MEMBRANE
 //#define FULL_CIRCUIT_MEMBRANE

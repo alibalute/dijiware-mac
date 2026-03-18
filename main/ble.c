@@ -19,7 +19,6 @@
 
 static gpio_num_t btLed = -1;
 
-extern void handleMessage(uint8_t btCode, uint8_t btData);
 extern void handleMidiMessage(uint8_t midi_status, uint8_t *remaining_message, size_t len, size_t continued_sysex_pos);
 
 static bool bleConnected = false;
@@ -71,17 +70,10 @@ void callback_midi_message_received(uint8_t blemidi_port, uint16_t timestamp, ui
   ESP_LOGI(TAG, "CALLBACK blemidi_port=%d, timestamp=%d, midi_status=0x%02x, len=%d, continued_sysex_pos=%d, remaining_message:", blemidi_port, timestamp, midi_status, len, continued_sysex_pos);
   ESP_LOG_BUFFER_HEX_LEVEL(TAG, remaining_message, len, ESP_LOG_DEBUG);
 
-   handleMidiMessage(midi_status, remaining_message, len, continued_sysex_pos); //this sends the received midi messages to the eTar synth
-
-  if (len>=2) {
-    handleMessage(remaining_message[0], remaining_message[1]);
-    ESP_LOGD(TAG, "remaining_message[0]= %x ,  remaining_message[1]= %x\n" ,remaining_message[0] , remaining_message[1] );//this line doesnt show anything!!!!
-  }
-  for (int i = 2; i < len; i += 3) { //not sure if this is needed !!!!!
-    handleMessage(remaining_message[i], remaining_message[i + 1]);
-        ESP_LOGD(TAG, "remaining_message[i]= %x, remaining_message[i] %x \n" ,  remaining_message[i]  , remaining_message[i+1] );//this line doesnt show anything!!!!
-
-  }
+  /* handleMidiMessage routes channel messages to UART/synth and, for status 0xfe only, calls handleMessage(code, data).
+   * Do not interpret raw payload bytes here: SysEx (0xf0/0xf7) and other statuses must not be treated as (code,data)
+   * or they trigger e.g. strumCalibrate (0x02) from app packet data and cause freezes. */
+  handleMidiMessage(midi_status, remaining_message, len, continued_sysex_pos);
 
   return;
   ////!!!! the following chunk is never reached and should be removed but leave it for the time being

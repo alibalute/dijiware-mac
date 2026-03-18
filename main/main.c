@@ -720,7 +720,7 @@ void startTasks(void) {
 
   xTaskCreate(buttonsTask, "buttonsTask", 4096, NULL, 6, &xButtonsTask);   /* below audio; UI can tolerate a few ms */
   assert(xButtonsTask != NULL);
-  xTaskCreate(etarTask, "etarTask", 10240, &xETarTask, 8 , &xETarTask);//eTarTask function is in etar.c so in order to have access to the task handle, we have to pass it to the function 
+  xTaskCreate(etarTask, "etarTask", 10240, &xETarTask, ETAR_TASK_PRIORITY, &xETarTask); 
   assert(xETarTask != NULL);
   xTaskCreate(batteryTask, "batteryTask", 4096, NULL, 6, &xBatteryTask);  /* below audio; runs every 5s */
   assert(xBatteryTask != NULL);

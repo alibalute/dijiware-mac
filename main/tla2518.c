@@ -12,6 +12,7 @@
 #include "tla2518.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_system.h"
 #include "pins.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -23,13 +24,12 @@
 #define DEBUG_READ 0
 #define DEBUG_WRITE 0
 #define DEBUG_SAMPLE 0
-#define STOP_ON_ERROR
+#undef STOP_ON_ERROR
 #define SEMAPHORE_TIMEOUT 10
 #define ADC_READ_RETRY_MAX 100
-/* Log before/after each SPI call to pinpoint which call hangs (set tla2518 to DEBUG). */
-#define TLA2518_SPI_HANG_DIAG 1
-/* Max wait for any single SPI transaction; prevents etarTask from blocking forever if SPI hangs. */
-#define SPI_TRANS_TIMEOUT_MS 50
+/* Pre-remove drain (legacy ISR-queued trans only). */
+#define SPI_DRAIN_TIMEOUT_MS 400
+#define SPI_DRAIN_RETRIES 12
 /* Max iterations for init wait loops; avoids boot freeze if ADC never responds */
 #define TLA2518_INIT_STATUS_RETRY_MAX  500
 #define TLA2518_INIT_CAL_RETRY_MAX     1000
@@ -52,6 +52,146 @@ static const spi_device_interface_config_t devConfig = {
 };
 
 static spi_device_handle_t devHandle;
+static spi_host_device_t s_adc_spi_host = SPI_HOST_MAX;
+static bool s_adc_spi_host_valid = false;
+
+/** Last-ditch drain before remove_device (only needed if legacy ISR-queued trans stuck). */
+static void drain_before_remove(void) {
+  spi_transaction_t *rtrans = NULL;
+  for (int i = 0; i < SPI_DRAIN_RETRIES; i++) {
+    if (spi_device_get_trans_result(devHandle, &rtrans, pdMS_TO_TICKS(SPI_DRAIN_TIMEOUT_MS)) ==
+        ESP_OK) {
+      return;
+    }
+  }
+}
+
+static esp_err_t adc_polling_write(uint8_t reg, uint8_t val) {
+  uint8_t tx[3] = { SINGLE_REGISTER_WRITE, reg, val };
+  uint8_t rx[4];
+  spi_transaction_t t = { 0 };
+  t.length = 3 * 8;
+  t.rxlength = 0;
+  t.tx_buffer = tx;
+  t.rx_buffer = rx;
+  return spi_device_polling_transmit(devHandle, &t);
+}
+
+static esp_err_t adc_polling_read(uint8_t reg, uint8_t *out) {
+  uint8_t tx[3] = { SINGLE_REGISTER_READ, reg, 0 };
+  uint8_t rx[4];
+  spi_transaction_t t = { 0 };
+  t.length = 3 * 8;
+  t.rxlength = 0;
+  t.tx_buffer = tx;
+  t.rx_buffer = rx;
+  esp_err_t e = spi_device_polling_transmit(devHandle, &t);
+  if (e != ESP_OK) {
+    return e;
+  }
+  t.length = 3 * 8;
+  t.rxlength = 3 * 8;
+  e = spi_device_polling_transmit(devHandle, &t);
+  if (e == ESP_OK && out) {
+    *out = rx[0];
+  }
+  return e;
+}
+
+static esp_err_t adc_registers_reinit_polling(void) {
+  esp_err_t e = adc_polling_write(SYSTEM_STATUS_ADDRESS, SYSTEM_STATUS_DEFAULT | BOR_ERROR);
+  if (e != ESP_OK) {
+    return e;
+  }
+  e = adc_polling_write(GENERAL_CFG_ADDRESS, GENERAL_CFG_DEFAULT | RST_START);
+  if (e != ESP_OK) {
+    return e;
+  }
+  for (int n = 0; n < TLA2518_INIT_STATUS_RETRY_MAX; n++) {
+    uint8_t v = 0;
+    e = adc_polling_read(SYSTEM_STATUS_ADDRESS, &v);
+    if (e != ESP_OK) {
+      return e;
+    }
+    if ((v & CRC_ERR_FUSE_ERROR) == CRC_ERR_FUSE_OKAY) {
+      break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+  e = adc_polling_write(GENERAL_CFG_ADDRESS,
+                        GENERAL_CFG_DEFAULT | CH_RST_FORCE_AIN | CAL_START);
+  if (e != ESP_OK) {
+    return e;
+  }
+  for (int n = 0; n < TLA2518_INIT_CAL_RETRY_MAX; n++) {
+    uint8_t v = 0;
+    e = adc_polling_read(GENERAL_CFG_ADDRESS, &v);
+    if (e != ESP_OK) {
+      return e;
+    }
+    if ((v & CAL_MASK) == CAL_COMPLETE) {
+      break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+  e = adc_polling_write(DATA_CFG_ADDRESS, DATA_CFG_DEFAULT | APPEND_STATUS_ID);
+  if (e != ESP_OK) {
+    return e;
+  }
+  return adc_polling_write(OPMODE_CFG_ADDRESS,
+                           OPMODE_CFG_DEFAULT | OSC_SEL_HIGH_SPEED | 0b0100);
+}
+
+static esp_err_t adc_polling_read_sample(uint16_t *value, uint8_t *channel) {
+  uint8_t rx_buffer[4], tx_buffer[4] = { 0, 0, 0 };
+  spi_transaction_t transaction = { 0 };
+  transaction.length = 2 * 8 + 4;
+  transaction.rxlength = 2 * 8 + 4;
+  transaction.rx_buffer = rx_buffer;
+  transaction.tx_buffer = tx_buffer;
+  esp_err_t e = spi_device_polling_transmit(devHandle, &transaction);
+  if (e == ESP_OK) {
+    *value = ((uint16_t)rx_buffer[0] << 8) + rx_buffer[1];
+    *channel = rx_buffer[2] >> 4;
+  }
+  return e;
+}
+
+/** Remove/re-add SPI device and re-init ADC when queue is stuck (must hold xADCSemaphore). */
+static esp_err_t tla2518_spi_bus_recovery(void) {
+  if (!s_adc_spi_host_valid || s_adc_spi_host >= SPI_HOST_MAX) {
+    ESP_LOGE(TAG, "SPI recovery: no host stored");
+    return ESP_ERR_INVALID_STATE;
+  }
+  ESP_LOGW(TAG, "ADC SPI bus recovery: remove/re-add device");
+  drain_before_remove();
+  esp_err_t r = spi_bus_remove_device(devHandle);
+  if (r == ESP_ERR_INVALID_STATE) {
+    ESP_LOGE(TAG,
+             "ADC SPI: unfinished ISR transaction (cannot remove device); restarting");
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    esp_restart();
+    return ESP_ERR_INVALID_STATE;
+  }
+  if (r != ESP_OK) {
+    ESP_LOGW(TAG, "spi_bus_remove_device returned %d", (int)r);
+    return r;
+  }
+  vTaskDelay(pdMS_TO_TICKS(50));
+  r = spi_bus_add_device(s_adc_spi_host, &devConfig, &devHandle);
+  if (r != ESP_OK) {
+    ESP_LOGE(TAG, "spi_bus_add_device failed %d", (int)r);
+    return r;
+  }
+  vTaskDelay(pdMS_TO_TICKS(20));
+  r = adc_registers_reinit_polling();
+  if (r != ESP_OK) {
+    ESP_LOGE(TAG, "adc_registers_reinit_polling failed %d", (int)r);
+    return r;
+  }
+  ESP_LOGI(TAG, "ADC SPI bus recovery OK");
+  return ESP_OK;
+}
 
 /* ADC semaphore: only tla2518.c take/give; only callers of getSample (adc.c readAndAverageStrum/String) are etar.c and util.c (calibration from etar/checkSleep). No other tasks use xADCSemaphore — deadlock from another task unlikely. */
 extern SemaphoreHandle_t xADCSemaphore;
@@ -63,6 +203,9 @@ void tla2518_init(uint8_t hostId) {
   xADCSemaphore = xSemaphoreCreateMutex();
   assert(xADCSemaphore != NULL);
   xSemaphoreGive(xADCSemaphore);
+
+  s_adc_spi_host = (spi_host_device_t)hostId;
+  s_adc_spi_host_valid = true;
 
   ESP_LOGD(TAG, "Init driver");
   ESP_ERROR_CHECK(spi_bus_add_device(hostId, &devConfig, &devHandle));
@@ -120,12 +263,6 @@ esp_err_t readTest(uint8_t reg, uint8_t bitmask, uint8_t testValue) {
 }
 
 uint16_t getSample(int channel) {
-  static uint32_t s_adc_call_count = 0;
-  s_adc_call_count++;
-  if (s_adc_call_count % 500 == 0) {
-    ESP_LOGI(TAG, "freeze ckpt ADC getSample n=%lu ch=%d", (unsigned long)s_adc_call_count, channel);
-  }
-  // sampleChannels((1 << channel));
   sampleChannel(channel);
   /* Yield after every ADC read so we never run many reads back-to-back;
    * avoids intermittent freezes when simple strums hit paths with several reads. */
@@ -134,41 +271,27 @@ uint16_t getSample(int channel) {
 }
 
 void sampleChannel(uint8_t channel) {
-  static uint32_t s_sample_ch_count = 0;
   uint16_t adcValue = 0;
   uint8_t adcChannel = 0;
 
-  s_sample_ch_count++;
-  bool trace = (s_sample_ch_count % 500 == 0);
-  if (trace) {
-    ESP_LOGI(TAG, "freeze ckpt ADC sampleChannel n=%lu ch=%u", (unsigned long)s_sample_ch_count, (unsigned)channel);
+  if (writeRegister(OSR_CFG_ADDRESS, OSR_CFG_DEFAULT | OSR_32) != ESP_OK) {
+    return;
   }
-  writeRegister(OSR_CFG_ADDRESS, OSR_CFG_DEFAULT | OSR_32);
-  writeRegister(DATA_CFG_ADDRESS,
-                DATA_CFG_DEFAULT /* | FIX_PAT_ENABLE */ | APPEND_STATUS_ID);
-  writeRegister(SEQUENCE_CFG_ADDRESS,
-                SEQUENCE_CFG_DEFAULT | SEQ_MODE_MANUAL);
-  writeRegister(MANUAL_CH_SEL_ADDRESS,
-                MANUAL_CH_SEL_DEFAULT | channel); // starting channel conversion
-  if (trace) {
-    ESP_LOGI(TAG, "freeze ckpt ADC sc after writes ch=%u", (unsigned)channel);
+  if (writeRegister(DATA_CFG_ADDRESS,
+                DATA_CFG_DEFAULT /* | FIX_PAT_ENABLE */ | APPEND_STATUS_ID) != ESP_OK) {
+    return;
   }
-  // writeRegister(SYSTEM_STATUS_ADDRESS, SYSTEM_STATUS_DEFAULT | OSR_DONE_MASK);
-  // wait for ADC data averaging done
-  // readSample(&adcValue, &adcChannel);
-  // while (ESP_OK !=
-  //        readTest(SYSTEM_STATUS_ADDRESS, OSR_DONE_MASK, OSR_DONE_COMPLETE)) {
-  //   vTaskDelay(1);
-  //        }
-  // writeRegister(SYSTEM_STATUS_ADDRESS, SYSTEM_STATUS_DEFAULT | OSR_DONE_MASK);
-  // readSample(&adcValue, &adcChannel); // discard at least one
-  // sample
+  if (writeRegister(SEQUENCE_CFG_ADDRESS,
+                SEQUENCE_CFG_DEFAULT | SEQ_MODE_MANUAL) != ESP_OK) {
+    return;
+  }
+  if (writeRegister(MANUAL_CH_SEL_ADDRESS,
+                MANUAL_CH_SEL_DEFAULT | channel) != ESP_OK) {
+    return;
+  }
   int retries = 0;
   while (retries < ADC_READ_RETRY_MAX) {
     esp_err_t ret = readSample(&adcValue, &adcChannel);
-    if (trace && retries > 0 && retries % 25 == 0) {
-      ESP_LOGI(TAG, "freeze ckpt ADC sc retry %d ch=%u", retries, (unsigned)channel);
-    }
     if (ESP_OK == ret && adcChannel == channel) {
       adcValues[adcChannel] = adcValue;
       break;
@@ -176,9 +299,6 @@ void sampleChannel(uint8_t channel) {
     retries++;
     /* Always yield on retry (wrong channel or read failed) to avoid task freeze and watchdog */
     vTaskDelay(pdMS_TO_TICKS(1));
-  }
-  if (trace) {
-    ESP_LOGI(TAG, "freeze ckpt ADC sc after loop ch=%u retries=%d", (unsigned)channel, retries);
   }
   if (retries >= ADC_READ_RETRY_MAX) {
     ESP_LOGW(TAG, "ADC read timeout ch %u", channel);
@@ -189,26 +309,37 @@ void sampleChannel(uint8_t channel) {
 }
 
 void sampleChannels(uint8_t channelMask) {
-  // averaging 64 samples
-  writeRegister(OSR_CFG_ADDRESS, OSR_CFG_DEFAULT | OSR_128);
-  writeRegister(AUTO_SEQ_CH_SEL_ADDRESS, channelMask);
-  writeRegister(DATA_CFG_ADDRESS, DATA_CFG_DEFAULT /* | FIX_PAT_ENABLE */ | APPEND_STATUS_ID);
-  writeRegister(SEQUENCE_CFG_ADDRESS,
-                SEQUENCE_CFG_DEFAULT | SEQ_MODE_AUTO | SEQ_START_ASSEND);
-  // writeRegister(SEQUENCE_CFG_ADDRESS,
-  //               SEQUENCE_CFG_DEFAULT | SEQ_START_ASSEND);
-  uint8_t status;
-  // wait for sequencer to start
+  if (writeRegister(OSR_CFG_ADDRESS, OSR_CFG_DEFAULT | OSR_128) != ESP_OK) {
+    return;
+  }
+  if (writeRegister(AUTO_SEQ_CH_SEL_ADDRESS, channelMask) != ESP_OK) {
+    return;
+  }
+  if (writeRegister(DATA_CFG_ADDRESS, DATA_CFG_DEFAULT /* | FIX_PAT_ENABLE */ | APPEND_STATUS_ID) != ESP_OK) {
+    return;
+  }
+  if (writeRegister(SEQUENCE_CFG_ADDRESS,
+                SEQUENCE_CFG_DEFAULT | SEQ_MODE_AUTO | SEQ_START_ASSEND) != ESP_OK) {
+    return;
+  }
+  int wait_retries = 0;
   while (ESP_OK != readTest(SYSTEM_STATUS_ADDRESS, SEQ_STATUS_MASK, SEQ_STATUS_RUNNING)) {
+    if (++wait_retries >= 50) {
+      ESP_LOGW(TAG, "sampleChannels SEQ_STATUS wait timeout");
+      return;
+    }
     vTaskDelay(10);
   }
-
-  // wait for ADC data averaging done
-  while (ESP_OK == readTest(SYSTEM_STATUS_ADDRESS, OSR_DONE_MASK, OSR_DONE_COMPLETE))
-    ;
+  wait_retries = 0;
+  while (ESP_OK == readTest(SYSTEM_STATUS_ADDRESS, OSR_DONE_MASK, OSR_DONE_COMPLETE)) {
+    if (++wait_retries >= 500) {
+      ESP_LOGW(TAG, "sampleChannels OSR_DONE wait timeout");
+      (void)writeRegister(SEQUENCE_CFG_ADDRESS, SEQUENCE_CFG_DEFAULT | SEQ_START_END);
+      return;
+    }
+  }
   uint16_t adcValue = 0;
   uint8_t adcChannel = 0;
-  // readSample(&adcValue, &adcChannel); // pass one read (12 clocks min) before starting collecting samples
   for (int channel = 0; channel < 8; channel++) {
     if ((1 << channel) & channelMask) {
       int retries = 0;
@@ -228,44 +359,23 @@ void sampleChannels(uint8_t channelMask) {
       }
     }
   }
-  writeRegister(SEQUENCE_CFG_ADDRESS, SEQUENCE_CFG_DEFAULT | SEQ_START_END);
-  // clear OSR_DONE bit
-  // writeRegister(SYSTEM_STATUS_ADDRESS, SYSTEM_STATUS_DEFAULT | OSR_DONE_MASK);
+  (void)writeRegister(SEQUENCE_CFG_ADDRESS, SEQUENCE_CFG_DEFAULT | SEQ_START_END);
 }
 
 esp_err_t writeRegister(uint8_t reg, uint8_t value) {
   if (xSemaphoreTake(xADCSemaphore, SEMAPHORE_TIMEOUT) == pdFALSE) {
-    ESP_LOGW(TAG, "ADC semaphore timeout (freeze diag): writeRegister reg=%02x", reg);
+    ESP_LOGW(TAG, "ADC semaphore timeout writeRegister reg=%02x", reg);
     return ESP_FAIL;
   }
 
-  esp_err_t ret;
-  spi_transaction_t transaction;
-  uint8_t rx_buffer[4], tx_buffer[4];
-
-  tx_buffer[0] = SINGLE_REGISTER_WRITE;
-  tx_buffer[1] = reg;
-  tx_buffer[2] = value;
-  transaction.length = 3 * 8;
-  transaction.rxlength = 0;
-  transaction.rx_buffer = rx_buffer;
-  transaction.tx_buffer = tx_buffer;
-  transaction.flags = 0;   // SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA;
-#if TLA2518_SPI_HANG_DIAG
-  ESP_LOGD(TAG, "freeze diag: before spi write reg=%02x", reg);
-#endif
-  ret = spi_device_queue_trans(devHandle, &transaction, portMAX_DELAY);
-  if (ret == ESP_OK) {
-    spi_transaction_t *rtrans = NULL;
-    ret = spi_device_get_trans_result(devHandle, &rtrans, pdMS_TO_TICKS(SPI_TRANS_TIMEOUT_MS));
-    if (ret == ESP_ERR_TIMEOUT) {
-      ESP_LOGW(TAG, "SPI transaction timeout write reg=%02x (freeze avoided)", reg);
-      ret = ESP_ERR_TIMEOUT;
+  /* Polling-only: never uses ISR queue, so remove_device recovery always works. */
+  esp_err_t ret = adc_polling_write(reg, value);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "ADC polling write fail reg=%02x err=%d, recovery", reg, (int)ret);
+    if (tla2518_spi_bus_recovery() == ESP_OK) {
+      ret = adc_polling_write(reg, value);
     }
   }
-#if TLA2518_SPI_HANG_DIAG
-  ESP_LOGD(TAG, "freeze diag: after spi write reg=%02x", reg);
-#endif
   if (ret == ESP_OK) {
 #if DEBUG_WRITE == 1
     ESP_LOGD(TAG, "wrote reg %02x = %02x", reg, value);
@@ -274,136 +384,50 @@ esp_err_t writeRegister(uint8_t reg, uint8_t value) {
     ESP_LOGE(TAG, "err %d (%04x) on reg %02x write", ret, ret, reg);
   }
   xSemaphoreGive(xADCSemaphore);
-#ifdef STOP_ON_ERROR
-  ESP_ERROR_CHECK(ret);
-#endif
   return ret;
 }
 
 esp_err_t readRegister(uint8_t reg, uint8_t *value) {
   if (xSemaphoreTake(xADCSemaphore, SEMAPHORE_TIMEOUT) == pdFALSE) {
-    ESP_LOGW(TAG, "ADC semaphore timeout (freeze diag): readRegister reg=%02x", reg);
+    ESP_LOGW(TAG, "ADC semaphore timeout readRegister reg=%02x", reg);
     return ESP_FAIL;
   }
 
-  esp_err_t ret;
   *value = 0;
-  uint8_t rx_buffer[4], tx_buffer[4];
-  spi_transaction_t transaction;
-  tx_buffer[0] = SINGLE_REGISTER_READ;
-  tx_buffer[1] = reg;
-  tx_buffer[2] = 0;
-  transaction.length = 3 * 8;
-  transaction.rxlength = 0 * 8;
-  transaction.rx_buffer = rx_buffer;
-  transaction.tx_buffer = tx_buffer;
-  transaction.flags = 0; //SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA;
-#if TLA2518_SPI_HANG_DIAG
-  ESP_LOGD(TAG, "freeze diag: before spi read cmd reg=%02x", reg);
-#endif
-  ret = spi_device_queue_trans(devHandle, &transaction, portMAX_DELAY);
+  esp_err_t ret = adc_polling_read(reg, value);
   if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "err %d (%04x) on read reg %02x", ret, ret, reg);
-    xSemaphoreGive(xADCSemaphore);
-    return ret;
-  }
-  spi_transaction_t *rtrans = NULL;
-  ret = spi_device_get_trans_result(devHandle, &rtrans, pdMS_TO_TICKS(SPI_TRANS_TIMEOUT_MS));
-  if (ret == ESP_ERR_TIMEOUT) {
-    ESP_LOGW(TAG, "SPI transaction timeout read cmd reg=%02x (freeze avoided)", reg);
-    xSemaphoreGive(xADCSemaphore);
-    return ESP_ERR_TIMEOUT;
+    ESP_LOGW(TAG, "ADC polling read fail reg=%02x err=%d, recovery", reg, (int)ret);
+    if (tla2518_spi_bus_recovery() == ESP_OK) {
+      ret = adc_polling_read(reg, value);
+    }
   }
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "err %d (%04x) on read reg %02x", ret, ret, reg);
-    xSemaphoreGive(xADCSemaphore);
-    return ret;
   }
-  transaction.length = 3 * 8;
-  transaction.rxlength = 3 * 8;
-  transaction.flags = 0;  // SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA;
-#if TLA2518_SPI_HANG_DIAG
-  ESP_LOGD(TAG, "freeze diag: before spi read data reg=%02x", reg);
-#endif
-  ret = spi_device_queue_trans(devHandle, &transaction, portMAX_DELAY);
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "err %d (%04x) on read reg %02x", ret, ret, reg);
-    xSemaphoreGive(xADCSemaphore);
-    return ret;
-  }
-  rtrans = NULL;
-  ret = spi_device_get_trans_result(devHandle, &rtrans, pdMS_TO_TICKS(SPI_TRANS_TIMEOUT_MS));
-  if (ret == ESP_ERR_TIMEOUT) {
-    ESP_LOGW(TAG, "SPI transaction timeout read data reg=%02x (freeze avoided)", reg);
-    xSemaphoreGive(xADCSemaphore);
-    return ESP_ERR_TIMEOUT;
-  }
-#if TLA2518_SPI_HANG_DIAG
-  ESP_LOGD(TAG, "freeze diag: after spi read reg=%02x", reg);
-#endif
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "err %d (%04x) on read reg %02x", ret, ret, reg);
-  } else {
-    *value = rx_buffer[0];
-  #if DEBUG_READ == 1
-    ESP_LOGD(TAG, "rx_buffer:");
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buffer, 3, ESP_LOG_DEBUG);
+#if DEBUG_READ == 1
+  else {
     ESP_LOGD(TAG, "Reg %02x = %02x", reg, *value);
-  #endif
   }
+#endif
   xSemaphoreGive(xADCSemaphore);
   return ret;
 }
 
 esp_err_t readSample(uint16_t *value, uint8_t *channel) {
-#if TLA2518_SPI_HANG_DIAG
-  ESP_LOGD(TAG, "freeze diag: readSample entry");
-#endif
   if (xSemaphoreTake(xADCSemaphore, SEMAPHORE_TIMEOUT) == pdFALSE) {
-    ESP_LOGW(TAG, "ADC semaphore timeout (freeze diag): readSample");
+    ESP_LOGW(TAG, "ADC semaphore timeout readSample");
     return ESP_FAIL;
   }
 
-  esp_err_t ret;
   *value = 0;
-  uint8_t rx_buffer[4], tx_buffer[4];
-  spi_transaction_t transaction;
-  tx_buffer[0] = 0;
-  tx_buffer[1] = 0;
-  tx_buffer[2] = 0;
-  // transaction.rx_data[0] = 0xff;
-  // transaction.rx_data[1] = 0xff;
-  // transaction.rx_data[2] = 0xff;
-  // transaction.tx_data[3] = 0;
-  transaction.length = 2 * 8 + 4;
-  transaction.rxlength = 2 * 8 + 4;
-  transaction.rx_buffer = rx_buffer;
-  transaction.tx_buffer = tx_buffer;
-  transaction.flags = 0; // SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA;
-#if TLA2518_SPI_HANG_DIAG
-  ESP_LOGD(TAG, "freeze diag: before spi readSample");
-#endif
-  ret = spi_device_queue_trans(devHandle, &transaction, portMAX_DELAY);
-  if (ret == ESP_OK) {
-    spi_transaction_t *rtrans = NULL;
-    ret = spi_device_get_trans_result(devHandle, &rtrans, pdMS_TO_TICKS(SPI_TRANS_TIMEOUT_MS));
-    if (ret == ESP_ERR_TIMEOUT) {
-      ESP_LOGW(TAG, "SPI transaction timeout readSample (freeze avoided)");
-      xSemaphoreGive(xADCSemaphore);
-      return ESP_ERR_TIMEOUT;
+  esp_err_t ret = adc_polling_read_sample(value, channel);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "ADC polling sample err=%d, recovery", (int)ret);
+    if (tla2518_spi_bus_recovery() == ESP_OK) {
+      ret = adc_polling_read_sample(value, channel);
     }
   }
-#if TLA2518_SPI_HANG_DIAG
-  ESP_LOGD(TAG, "freeze diag: after spi readSample");
-#endif
-  if (ret == ESP_OK) {
-#if DEBUG_SAMPLE == 2
-    ESP_LOGD(TAG, "sample_buffer:");
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buffer, 3, ESP_LOG_DEBUG);
-#endif
-    *value = ((uint16_t)rx_buffer[0] << 8) + rx_buffer[1];
-    *channel = rx_buffer[2] >> 4;
-  } else {
+  if (ret != ESP_OK) {
     ESP_LOGE(TAG, "err %d (%04x) on sample read", ret, ret);
   }
   xSemaphoreGive(xADCSemaphore);

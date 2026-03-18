@@ -1,5 +1,5 @@
 {
-    "instrument": 24,
+    "instrument": 107,
     "chords": 0,
     "tuning": 0,
     "tapping": 0,
@@ -13,7 +13,7 @@
     "percussion": 0,
     "tapWithoutStrum": 0,
     "pitchSystem": 0,
-    "constantVelocity": 0,
+    "constantVelocity": 1,
     "effects": 0,
     "pitchChange": 0,
     "midiChannel": 0,

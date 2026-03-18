@@ -240,10 +240,18 @@ void (*blemidi_callback_midi_message_received)(
 
 void (*bleConnectionCB)(bool connected) = NULL;
 
+/** False after blemidi_shutdown until blemidi_restart succeeds. */
+static volatile bool blemidi_hw_up = false;
+
+bool blemidi_is_active(void) { return blemidi_hw_up; }
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Timestamp handling
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void blemidi_tick(void) {
+  if (!blemidi_hw_up) {
+    return;
+  }
   struct timeval tv;
   gettimeofday(&tv, NULL);
   blemidi_timestamp =
@@ -273,6 +281,9 @@ uint8_t blemidi_timestamp_low(void) {
 // Flush Output Buffer (normally done by blemidi_tick_ms each 15 mS)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 int32_t blemidi_outbuffer_flush(uint8_t blemidi_port) {
+  if (!blemidi_hw_up) {
+    return 0;
+  }
   if (blemidi_port >= BLEMIDI_NUM_PORTS) return -1;  // invalid port
 
   if (blemidi_outbuffer_len[blemidi_port] > 0) {
@@ -360,6 +371,9 @@ int32_t blemidi_send_message(uint8_t blemidi_port, uint8_t *stream,
                              size_t len) {
   const size_t max_header_size = 2;
 
+  if (!blemidi_hw_up) {
+    return 0;
+  }
   if (blemidi_port >= BLEMIDI_NUM_PORTS) return -1;  // invalid port
 
   // we've to consider blemidi_mtu
@@ -926,57 +940,33 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
   } while (0);
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Initializes the BLE MIDI Server
-////////////////////////////////////////////////////////////////////////////////////////////////////
-int32_t blemidi_init(void (*_bleConnectionCB)(bool),
-                     void *_callback_midi_message_received) {
-  bleConnectionCB = _bleConnectionCB;
-
-  esp_err_t ret;
-
-  esp_log_level_set(TAG, BLE_MIDI_LOG_LEVEL);
-  // callback will be installed if driver was booted successfully
-  blemidi_callback_midi_message_received =
-       //blemidi_receive_packet_callback_for_debugging;
-      _callback_midi_message_received; // this call back is implemented in ble.c
-  // /* Initialize NVS. */
-  ret = nvs_flash_init();
-  if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
-      ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    ESP_ERROR_CHECK(nvs_flash_erase());
-    ret = nvs_flash_init();
-  }
-  ESP_ERROR_CHECK(ret);
-
-  ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
-
-  /* Initialize Bluedroid. */
+/** Controller + Bluedroid + GATTS (no NVS, no mem_release). */
+static int32_t blemidi_start_controller_and_gatt(void) {
   esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-  ret = esp_bt_controller_init(&bt_cfg);
+  esp_err_t ret = esp_bt_controller_init(&bt_cfg);
   if (ret) {
-    ESP_LOGE(TAG, "%s enable controller failed: %s", __func__,
+    ESP_LOGE(TAG, "%s controller_init failed: %s", __func__,
              esp_err_to_name(ret));
     return -1;
   }
 
   ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
   if (ret) {
-    ESP_LOGE(TAG, "%s enable controller failed: %s", __func__,
+    ESP_LOGE(TAG, "%s controller_enable failed: %s", __func__,
              esp_err_to_name(ret));
     return -2;
   }
 
   ret = esp_bluedroid_init();
   if (ret) {
-    ESP_LOGE(TAG, "%s init bluetooth failed: %s", __func__,
+    ESP_LOGE(TAG, "%s bluedroid_init failed: %s", __func__,
              esp_err_to_name(ret));
     return -3;
   }
 
   ret = esp_bluedroid_enable();
   if (ret) {
-    ESP_LOGE(TAG, "%s enable bluetooth failed: %s", __func__,
+    ESP_LOGE(TAG, "%s bluedroid_enable failed: %s", __func__,
              esp_err_to_name(ret));
     return -4;
   }
@@ -1002,26 +992,85 @@ int32_t blemidi_init(void (*_bleConnectionCB)(bool),
   esp_err_t local_mtu_ret =
       esp_ble_gatt_set_local_mtu(GATTS_MIDI_CHAR_VAL_LEN_MAX);
   if (local_mtu_ret) {
-    ESP_LOGE(TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
+    ESP_LOGE(TAG, "set local MTU failed, error code = %x", local_mtu_ret);
     return -8;
   }
 
-  // Output Buffer
-  {
-    uint32_t blemidi_port;
-    for (blemidi_port = 0; blemidi_port < BLEMIDI_NUM_PORTS; ++blemidi_port) {
-      blemidi_outbuffer_len[blemidi_port] = 0;
-      blemidi_continued_sysex_pos[blemidi_port] = 0;
-    }
+  return 0;
+}
+
+void blemidi_shutdown(void) {
+  if (!blemidi_hw_up) {
+    return;
+  }
+  blemidi_hw_up = false;
+
+  esp_ble_gap_stop_advertising();
+  vTaskDelay(pdMS_TO_TICKS(300));
+
+  esp_bluedroid_disable();
+  esp_bluedroid_deinit();
+  esp_bt_controller_disable();
+  esp_bt_controller_deinit();
+  ESP_LOGI(TAG, "BLE radio shut down");
+}
+
+int32_t blemidi_restart(void) {
+  if (blemidi_hw_up) {
+    return 0;
+  }
+  int32_t r = blemidi_start_controller_and_gatt();
+  if (r != 0) {
+    return r;
+  }
+  blemidi_hw_up = true;
+  for (uint32_t p = 0; p < BLEMIDI_NUM_PORTS; ++p) {
+    blemidi_outbuffer_len[p] = 0;
+    blemidi_continued_sysex_pos[p] = 0;
+  }
+  ESP_LOGI(TAG, "BLE radio restarted");
+  return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Initializes the BLE MIDI Server
+////////////////////////////////////////////////////////////////////////////////////////////////////
+int32_t blemidi_init(void (*_bleConnectionCB)(bool),
+                     void *_callback_midi_message_received) {
+  bleConnectionCB = _bleConnectionCB;
+
+  esp_err_t ret;
+
+  esp_log_level_set(TAG, BLE_MIDI_LOG_LEVEL);
+  blemidi_callback_midi_message_received = _callback_midi_message_received;
+
+  ret = nvs_flash_init();
+  if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
+      ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    ret = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK(ret);
+
+  ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+
+  int32_t start = blemidi_start_controller_and_gatt();
+  if (start != 0) {
+    return start;
+  }
+  blemidi_hw_up = true;
+
+  for (uint32_t blemidi_port = 0; blemidi_port < BLEMIDI_NUM_PORTS;
+       ++blemidi_port) {
+    blemidi_outbuffer_len[blemidi_port] = 0;
+    blemidi_continued_sysex_pos[blemidi_port] = 0;
   }
 
-  // Finally install callback
-  blemidi_callback_midi_message_received = _callback_midi_message_received; //callback_midi_message_receive is implemented in ble.c
+  blemidi_callback_midi_message_received = _callback_midi_message_received;
 
-  esp_log_level_set(TAG, ESP_LOG_DEBUG);  // can be changed with the
-                                          // "blemidi_debug on" console command
+  esp_log_level_set(TAG, ESP_LOG_DEBUG);
 
-  return 0;  // no error
+  return 0;
 }
 
 #if BLEMIDI_ENABLE_CONSOLE

@@ -578,8 +578,7 @@ void etarTask(void *pvParameters)
     if (log_ckpt) {
       ESP_LOGI(TAG, "freeze ckpt A iter=%lu", (unsigned long)s_etar_iter);
     }
-    /* Run at lower priority so BLE/ADC/other tasks get CPU and freezes are reduced (both constant velocity and dynamics) */
-    vTaskPrioritySet(task, 6);
+    vTaskPrioritySet(task, ETAR_TASK_PRIORITY);
     vTaskDelay(0);  /* yield at start of each iteration so other tasks (BLE, WiFi, etc.) get CPU and reduce freezes */
     if (millis() - s_etar_last_heartbeat_ms >= 5000U) {
       ESP_LOGI(TAG, "freeze heartbeat etar");
@@ -590,6 +589,8 @@ void etarTask(void *pvParameters)
       ESP_LOGD(TAG, "etarTask running");
       now = millis();
     }
+    /* BLE/USB schedule strum calibrate here so ADC is never used from those callbacks */
+    util_run_pending_strum_calibrate_from_etar();
     // muteOnPowerChange();
 
     /* timer_check() now runs in main's timerTask (every 1ms); no need to call here */

@@ -16,9 +16,13 @@
 #include "esp_log.h"
 
 #include <math.h>
+#include <stdatomic.h>
 #include "main.h"
 
 static const char *TAG = "util";
+
+/* Strum calibrate touches ADC/SPI; must not run from BLE/USB callbacks (races eTar on xADCSemaphore). */
+static atomic_bool g_strum_calib_pending = ATOMIC_VAR_INIT(false);
 
 extern void setUSBCableConnected(bool connected);
 extern bool isBLEConnected(void);
@@ -207,6 +211,16 @@ extern bool stringEnabledArray[4];
 /**
 *	Calibrate Functions                                                    *
 \******************************************************************************/
+void util_schedule_strum_calibrate(void) {
+  atomic_store_explicit(&g_strum_calib_pending, true, memory_order_release);
+}
+
+void util_run_pending_strum_calibrate_from_etar(void) {
+  if (!atomic_exchange_explicit(&g_strum_calib_pending, false, memory_order_acq_rel))
+    return;
+  strumCalibrate();
+}
+
 void strumCalibrate(void) {
   ESP_LOGD(TAG, "Calibrating Strums");
   for (int i = 0; i < NUM_STRINGS; i++) {
@@ -263,9 +277,16 @@ static void apply_loaded_settings(cJSON *loaded_settings) {
     if (loaded_settings == NULL) return;
     /* Apply MIDI channel first so instrument (0x16) and other messages use the correct channel */
     { int v = get_numerical_setting(loaded_settings, "midiChannel"); handleMessage(0x47, (uint8_t)v); }
-    /* Then instrument (0x16) so program change goes to the right channel */
-    synthInstrument = (uint8_t)get_numerical_setting(loaded_settings, "instrument");
-    handleMessage(0x16, synthInstrument);
+    /* Instrument: missing/non-numeric JSON used to become 0 → GM program 0 (piano) */
+    {
+      cJSON *inst = cJSON_GetObjectItemCaseSensitive(loaded_settings, "instrument");
+      if (inst != NULL && cJSON_IsNumber(inst)) {
+        synthInstrument = (uint8_t)(int)inst->valuedouble;
+      } else {
+        synthInstrument = 24;
+      }
+      handleMessage(0x16, synthInstrument);
+    }
     chordEnabled = (bool)get_numerical_setting(loaded_settings, "chords");
     handleMessage(0x35, chordEnabled);
     tuningIndex = (uint8_t)get_numerical_setting(loaded_settings, "tuning");
@@ -334,9 +355,8 @@ void handleMessage(int8_t code, int8_t data){
                 inputToUART(0xB0+quartertoneChannel, 0x40, 0);
             #endif
         }
-    } else if (code == 0x02) { 			//calibrate button
-        
-        strumCalibrate();
+    } else if (code == 0x02) { 			//calibrate button (deferred to eTar — ADC mutex)
+        util_schedule_strum_calibrate();
         //stringCalibrate();
     } else if (code == 0x03) { 			//setting strum start threshold
         strumStartThreshold = data;
@@ -1073,10 +1093,8 @@ void handleUsbMessage(uint8_t usbCode, uint8_t usbData){
                 #endif
             }
         }
-    } else if (usbCode == 0x81) { 			//calibrate button
-       
-
-        strumCalibrate();
+    } else if (usbCode == 0x81) { 			//calibrate button (deferred to eTar)
+        util_schedule_strum_calibrate();
         //stringCalibrate();
     } else if (usbCode == 0x82) { 			//setting strum start threshold
         strumStartThreshold = usbData ;

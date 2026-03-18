@@ -65,6 +65,15 @@ extern "C" {
  */
 extern int32_t blemidi_init(void (*_bleConnectionCB)(bool), void *callback_midi_message_received);
 
+/** True while BLE controller + Bluedroid are up (after init/restart, until shutdown). */
+extern bool blemidi_is_active(void);
+
+/** Stop advertising and power down BLE radio (safe when not connected). */
+extern void blemidi_shutdown(void);
+
+/** Bring BLE stack back after blemidi_shutdown (same callbacks as init). Returns 0 on success. */
+extern int32_t blemidi_restart(void);
+
 /**
  * @brief Sends a BLE MIDI message
  *

@@ -20,6 +20,9 @@ extern bool midiStop ;
 
 //Calibrate Functions
 void strumCalibrate(void);
+/** Schedule strum ADC calibrate; runs in eTar task only (avoids BLE/USB racing eTar on ADC mutex). */
+void util_schedule_strum_calibrate(void);
+void util_run_pending_strum_calibrate_from_etar(void);
 void stringCalibrate(int i , bool recalibrate);
 void joystickCalibrate(void);
 
