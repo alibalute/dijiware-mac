@@ -54,13 +54,26 @@ static int s_ota_bytes_for_debug = 0;
 #define OTA_FAIL_REASON_MAX 120
 static char s_ota_fail_reason[OTA_FAIL_REASON_MAX];
 
+/* Storage upload state (separate from OTA). */
+static bool storageUploadFailed = false;
+#define STORAGE_FAIL_REASON_MAX 120
+static char s_storage_fail_reason[STORAGE_FAIL_REASON_MAX];
+
 /* Forward declaration: defined below after runOtaUpload. */
 static int findFirmwareStartInBuffer(const char *buf, size_t len);
+static int findStorageStartInBuffer(const char *buf, size_t len);
 
 static void set_ota_fail_reason(const char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   vsnprintf(s_ota_fail_reason, sizeof(s_ota_fail_reason), fmt, ap);
+  va_end(ap);
+}
+
+static void set_storage_fail_reason(const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(s_storage_fail_reason, sizeof(s_storage_fail_reason), fmt, ap);
   va_end(ap);
 }
 
@@ -393,6 +406,152 @@ static void runOtaUpload(httpd_req_t *req) {
   return;
 }
 
+/**
+ * Run storage (SPIFFS) image upload: read multipart body (field "storage"), erase storage partition, write image.
+ * Does not restart; caller can tell user to reboot.
+ */
+static void runStorageUpload(httpd_req_t *req) {
+  const esp_partition_t *partition = esp_partition_find_first(
+      ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "storage");
+  if (partition == NULL) {
+    set_storage_fail_reason("Storage partition not found.");
+    storageUploadFailed = true;
+    return;
+  }
+
+  size_t recv_size = (req->content_len > 0 && req->content_len <= BUFFER_SIZE)
+      ? (size_t)req->content_len : BUFFER_SIZE;
+  if (recv_size == 0) recv_size = BUFFER_SIZE;
+
+  static uint8_t storage_header_accum[HEADER_ACCUM_MAX];
+  static uint8_t storage_overflow_buf[BUFFER_SIZE];
+  size_t storage_header_len = 0;
+  size_t storage_overflow_len = 0;
+  bool storageFound = false;
+  size_t storage_offset = 0;
+
+  while (1) {
+    int data_read = httpd_req_recv(req, (char *)buffer, recv_size);
+    if (data_read < 0 && data_read != HTTPD_SOCK_ERR_TIMEOUT) {
+      set_storage_fail_reason("Network or connection error during upload.");
+      storageUploadFailed = true;
+      return;
+    } else if (data_read == 0) {
+      break;
+    } else if (data_read == HTTPD_SOCK_ERR_TIMEOUT) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+    } else if (data_read > 0) {
+      if (storage_overflow_len > 0) {
+        size_t total = storage_overflow_len + (size_t)data_read;
+        if (total <= BUFFER_SIZE) {
+          memmove(buffer + storage_overflow_len, buffer, (size_t)data_read);
+          memcpy(buffer, storage_overflow_buf, storage_overflow_len);
+          data_read = (int)total;
+          storage_overflow_len = 0;
+        } else {
+          size_t orig_overflow = storage_overflow_len;
+          memcpy(storage_header_accum, buffer, (size_t)data_read);
+          memcpy(buffer, storage_overflow_buf, storage_overflow_len);
+          memcpy(buffer + storage_overflow_len, storage_header_accum, BUFFER_SIZE - storage_overflow_len);
+          storage_overflow_len = total - BUFFER_SIZE;
+          memcpy(storage_overflow_buf, storage_header_accum + (BUFFER_SIZE - orig_overflow), storage_overflow_len);
+          data_read = BUFFER_SIZE;
+        }
+      }
+
+      if (!storageFound && storage_header_len + (size_t)data_read <= HEADER_ACCUM_MAX) {
+        memcpy(storage_header_accum + storage_header_len, buffer, (size_t)data_read);
+        storage_header_len += (size_t)data_read;
+        int off = findStorageStartInBuffer((const char *)storage_header_accum, storage_header_len);
+        if (off >= 0) {
+          size_t body_len = storage_header_len - (size_t)off;
+          memcpy(buffer, storage_header_accum + off, body_len);
+          data_read = (int)body_len;
+          storageFound = true;
+          ESP_LOGI(TAG, "Found storage image in multipart (%u bytes first chunk)", (unsigned)body_len);
+        } else {
+          data_read = 0;
+        }
+      } else if (!storageFound && storage_header_len + (size_t)data_read > HEADER_ACCUM_MAX) {
+        size_t to_add = HEADER_ACCUM_MAX - storage_header_len;
+        memcpy(storage_header_accum + storage_header_len, buffer, to_add);
+        storage_header_len = HEADER_ACCUM_MAX;
+        int off = findStorageStartInBuffer((const char *)storage_header_accum, storage_header_len);
+        if (off >= 0) {
+          size_t body_len = storage_header_len - (size_t)off;
+          int orig_recv = data_read;
+          if (to_add < (size_t)orig_recv) {
+            storage_overflow_len = (size_t)orig_recv - to_add;
+            memcpy(storage_overflow_buf, buffer + to_add, storage_overflow_len);  /* remainder of recv */
+          }
+          memcpy(buffer, storage_header_accum + off, body_len);
+          data_read = (int)body_len;
+          storageFound = true;
+          ESP_LOGI(TAG, "Found storage image in multipart (%u bytes first chunk)", (unsigned)body_len);
+        } else {
+          set_storage_fail_reason("Invalid upload format. Use a form field name=\"storage\" and select storage.bin.");
+          storageUploadFailed = true;
+          return;
+        }
+      }
+
+      if (storageFound && data_read > 0) {
+        if (storage_offset == 0) {
+          ESP_LOGI(TAG, "Erasing storage partition (size %u)", (unsigned)partition->size);
+          for (size_t off = 0; off < partition->size; off += partition->erase_size) {
+            esp_err_t err = esp_partition_erase_range(partition, off, partition->erase_size);
+            if (err != ESP_OK) {
+              set_storage_fail_reason("Erase failed (%s).", esp_err_to_name(err));
+              storageUploadFailed = true;
+              return;
+            }
+            vTaskDelay(pdMS_TO_TICKS(5));
+          }
+        }
+
+        for (size_t off = 0; off < (size_t)data_read; off += OTA_WRITE_CHUNK) {
+          size_t n = (off + OTA_WRITE_CHUNK <= (size_t)data_read)
+              ? OTA_WRITE_CHUNK : ((size_t)data_read - off);
+          if (storage_offset + n > partition->size) {
+            unsigned part_k = (unsigned)(partition->size / 1024);
+            unsigned image_k = (unsigned)((storage_offset + n) / 1024);
+            set_storage_fail_reason(
+                "Storage image larger than partition (partition %u KB, image at least %u KB). "
+                "Rebuild storage.bin for this device or reflash partition table.",
+                part_k, image_k);
+            storageUploadFailed = true;
+            return;
+          }
+          esp_err_t err = esp_partition_write(partition, storage_offset, buffer + off, n);
+          if (err != ESP_OK) {
+            set_storage_fail_reason("Write failed (%s).", esp_err_to_name(err));
+            storageUploadFailed = true;
+            return;
+          }
+          storage_offset += n;
+          vTaskDelay(pdMS_TO_TICKS(1));
+        }
+      }
+      vTaskDelay(pdMS_TO_TICKS(1));
+    }
+  }
+
+  if (!storageFound || storage_offset == 0) {
+    set_storage_fail_reason("No storage image received. Use form field name=\"storage\" and select storage.bin.");
+    storageUploadFailed = true;
+    return;
+  }
+
+  ESP_LOGI(TAG, "Storage image uploaded: %u bytes", (unsigned)storage_offset);
+  static const char success_html[] =
+    "<!DOCTYPE html><html><head><title>Storage Update</title></head><body>"
+    "<p style=\"color:green;font-weight:bold;\">Storage image uploaded successfully.</p>"
+    "<p>Reboot the device to use the new SPIFFS contents (e.g. settings.json, factory.json).</p></body></html>";
+  httpd_resp_set_status(req, "200 OK");
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_send(req, success_html, (ssize_t)sizeof(success_html) - 1);
+}
+
 /* Find start of binary in multipart body: header must contain form-data, name="firmware", and filename=;
  * body starts after the first \r\n\r\n. Returns offset of first body byte, or -1. */
 static int findFirmwareStartInBuffer(const char *buf, size_t len) {
@@ -414,6 +573,29 @@ static int findFirmwareStartInBuffer(const char *buf, size_t len) {
   /* Require all three (browsers may send name/filename in any order) */
   if (!strstr(header, "form-data")) return -1;
   if (!strstr(header, "name=\"firmware\"") && !strstr(header, "name='firmware'")) return -1;
+  if (!strstr(header, "filename=")) return -1;
+  return (int)(body - buf);
+}
+
+/* Same as findFirmwareStartInBuffer but for multipart field name="storage" (storage.bin upload). */
+static int findStorageStartInBuffer(const char *buf, size_t len) {
+  const char *body = NULL;
+  for (size_t i = 0; i + 4 <= len; i++) {
+    if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n') {
+      body = buf + i;
+      break;
+    }
+  }
+  if (!body) return -1;
+  size_t header_len = (size_t)(body - buf);
+  body += 4;
+  if (header_len > 512) return -1;
+  char header[520];
+  if (header_len >= sizeof(header)) return -1;
+  memcpy(header, buf, header_len);
+  header[header_len] = '\0';
+  if (!strstr(header, "form-data")) return -1;
+  if (!strstr(header, "name=\"storage\"") && !strstr(header, "name='storage'")) return -1;
   if (!strstr(header, "filename=")) return -1;
   return (int)(body - buf);
 }
@@ -512,6 +694,48 @@ esp_err_t FirmwareUpdater::handler(httpd_req *req) {
   }
 }
 
+esp_err_t FirmwareUpdater::storageHandler(httpd_req_t *req) {
+  if (req->method != HTTP_POST) {
+    httpd_resp_send_err(req, HTTPD_405_METHOD_NOT_ALLOWED, NULL);
+    return ESP_FAIL;
+  }
+  storageUploadFailed = false;
+  s_storage_fail_reason[0] = '\0';
+
+  if (req->content_len == 0) {
+    static const char no_body[] =
+      "<!DOCTYPE html><html><head><title>Storage OTA</title></head><body>"
+      "<p>No file or empty upload. Please select storage.bin.</p></body></html>";
+    httpd_resp_set_status(req, "200 OK");
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_send(req, no_body, (ssize_t)sizeof(no_body) - 1);
+    return ESP_OK;
+  }
+
+  runStorageUpload(req);
+
+  if (storageUploadFailed) {
+    static char fail_resp[512];
+    const char *reason = (s_storage_fail_reason[0] != '\0')
+        ? s_storage_fail_reason : "Unknown error.";
+    int n = snprintf(fail_resp, sizeof(fail_resp),
+        "<p class=\"ota-fail-title\">Storage upload failed.</p><p class=\"ota-fail-reason\">%s</p>",
+        reason);
+    if (n > 0 && (size_t)n < sizeof(fail_resp)) {
+      httpd_resp_set_status(req, "200 OK");
+      httpd_resp_set_type(req, "text/html");
+      httpd_resp_send(req, fail_resp, (ssize_t)n);
+    } else {
+      static const char fail_fallback[] =
+          "<p class=\"ota-fail-title\">Storage upload failed.</p><p class=\"ota-fail-reason\">Unknown error.</p>";
+      httpd_resp_set_status(req, "200 OK");
+      httpd_resp_set_type(req, "text/html");
+      httpd_resp_send(req, fail_fallback, (ssize_t)sizeof(fail_fallback) - 1);
+    }
+  }
+  return ESP_OK;
+}
+
 #else  /* __APPLE__: stubs for macOS host parsing (Mach-O rejects ESP-IDF section attributes) */
 
 bool parseData(uint8_t *buffer, int ret, uint8_t **firmwareData, size_t *size) {
@@ -527,6 +751,11 @@ void initParser(void) {}
 FirmwareUpdater::FirmwareUpdater() {}
 
 esp_err_t FirmwareUpdater::handler(httpd_req *req) {
+  (void)req;
+  return 0;
+}
+
+esp_err_t FirmwareUpdater::storageHandler(httpd_req *req) {
   (void)req;
   return 0;
 }

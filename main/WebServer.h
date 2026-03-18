@@ -25,6 +25,7 @@
 typedef enum {
   FILE_HANDLER,
   FIRMWARE_HANDLER,
+  STORAGE_HANDLER,
   DEBUG_HANDLER,
 } HandlerType;
 

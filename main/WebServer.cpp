@@ -51,6 +51,12 @@ Api apis[] = {
         .methods = {HTTP_POST},
     },
     {
+        .name = "storage",
+        .handler = STORAGE_HANDLER,
+        .numMethods = 1,
+        .methods = {HTTP_POST},
+    },
+    {
         .name = "debug",
         .handler = DEBUG_HANDLER,
         .numMethods = 1,
@@ -77,6 +83,9 @@ static esp_err_t fileHandlerCaller(httpd_req_t* req) {
 }
 static esp_err_t firmwareUpdaterCaller(httpd_req_t* req) {
   return pFirmwareUpdater->handler(req);
+}
+static esp_err_t storageUpdaterCaller(httpd_req_t* req) {
+  return pFirmwareUpdater->storageHandler(req);
 }
 
 WebServer::WebServer(bool useFAT)
@@ -136,6 +145,9 @@ bool WebServer::addApis(const char* path) {
       switch (apis[i].handler) {
         case FIRMWARE_HANDLER:
           uris[uriCount]->handler = firmwareUpdaterCaller;
+          break;
+        case STORAGE_HANDLER:
+          uris[uriCount]->handler = storageUpdaterCaller;
           break;
         case DEBUG_HANDLER:
           uris[uriCount]->handler = debugHandler;

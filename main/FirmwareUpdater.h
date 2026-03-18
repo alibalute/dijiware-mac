@@ -69,6 +69,14 @@ public:
    */
   esp_err_t handler(httpd_req* req);
 
+  /**
+   * @brief Handles form file upload of storage.bin (SPIFFS) to the storage partition
+   *
+   * @param req
+   * @return esp_err_t
+   */
+  esp_err_t storageHandler(httpd_req* req);
+
 private:
 };
 
