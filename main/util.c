@@ -1441,6 +1441,7 @@ float fAbsoluteDiff(float x, float y) {
 
 void handleMidiMessage(uint8_t midi_status, uint8_t *msg, size_t len, size_t continued_sysex_pos)
 {
+  (void)continued_sysex_pos;
   // ESP_LOGD(TAG,"Status %d [%d,%d]",midi_status,msg[0],msg[1]);
   if (midi_status>=0x80 && midi_status<=0xbf) {
     if (len==2) {
@@ -1449,7 +1450,13 @@ void handleMidiMessage(uint8_t midi_status, uint8_t *msg, size_t len, size_t con
   } else {
 
     if( midi_status==0xfe){//0xfe is an unused status byte that we use it here to send some control messages to eTar
-        handleMessage (msg[0],msg[1]);
+        /* BLE apps may send 0xFE (Active Sensing) with no payload.
+         * Only treat 0xFE as our private control frame when 2 bytes are present. */
+        if (len >= 2) {
+          handleMessage(msg[0], msg[1]);
+        } else {
+          ESP_LOGD(TAG, "Ignoring 0xFE with short payload (len=%u)", (unsigned)len);
+        }
     }
     else{
         ESP_LOGD(TAG, "Status %d unhandled", midi_status);
