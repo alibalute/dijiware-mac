@@ -8,7 +8,7 @@
         "task.h": "c"
     },
     "idf.idfPath": "/Users/dijilele/esp/v5.0.2/esp-idf",
-    "idf.port": "/dev/tty.usbserial-FT6DXO0D",
+    "idf.port": "/dev/tty.usbserial-BG03TWY5",
     "idf.pythonBinPath": "/Users/dijilele/.espressif/python_env/idf5.0_py3.11_env/bin/python",
     "idf.customExtraPaths": "/Users/dijilele/.espressif/python_env/idf5.0_py3.11_env/bin:/Users/dijilele/esp/v5.0.2/esp-idf/tools",
     "idf.flashType": "UART"

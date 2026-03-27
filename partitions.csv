@@ -19,3 +19,5 @@ storage,  data, spiffs,  ,        1000K,
 #ota_0,       app,  ota_0,   ,        1536K,
 #ota_1,       app,  ota_1,   ,        1536K,
 #storage,     data, spiffs,  ,        512K,
+
+
