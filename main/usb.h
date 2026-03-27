@@ -12,11 +12,15 @@
 #ifndef __USB_H_
 #define __USB_H_
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+#if defined(__APPLE__)
+#include "usb_host_stub.h"
+#else
 #include "tinyusb.h"
+#endif
 // #include "tusb_cdc_acm.h"
-#include "esp_log.h"
-#include "sdkconfig.h"
 
 #define PORT_SPEED 115200U
 

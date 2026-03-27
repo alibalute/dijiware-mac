@@ -11,11 +11,19 @@
 
 #include "usb.h"
 #include "usbmidi.h"
+#if defined(__APPLE__)
+#include "usb_host_stub.h"
+#else
 #include "tinyusb.h"
-// #include "tusb_cdc_acm.h"
 #include "class/midi/midi_device.h"
+#include "esp_log.h"
+#endif
+// #include "tusb_cdc_acm.h"
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define DEBUG_LEVEL ESP_LOG_INFO
 
@@ -38,9 +46,8 @@ extern void handleMidiMessage(uint8_t midi_status, uint8_t *remaining_message, s
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
-    // static uint8_t buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE + 1];
-    static size_t rx_size = 0;
-static bool buffer_read = true;
+// static uint8_t buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE + 1];
+static size_t rx_size = 0;
 static bool usbCableConnected = false;
 
 void setUSBCableConnected(bool connected);  /* forward decl for tud_mount_cb / tud_umount_cb */
@@ -94,7 +101,7 @@ static char *string_descriptors[] = {
 
 tinyusb_config_t partial_init = {
     .device_descriptor = &midi_descriptor,
-    .string_descriptor = &string_descriptors,
+    .string_descriptor = (const char **)string_descriptors,
     .configuration_descriptor = NULL,  /* use component default (MIDI from Kconfig) */
     .external_phy = false,
     .self_powered = false,
@@ -191,10 +198,11 @@ size_t usb_write_bytes(int itf, const uint8_t *buffer, size_t len)
 
 size_t usb_get_buffered_data_len(int itf, size_t *len)
 {
+  (void)itf;
   rx_size = tud_midi_available();
   if (rx_size)
   {
-    ESP_LOGD(TAG, "Len = %u", rx_size);
+    ESP_LOGD(TAG, "Len = %u", (unsigned)rx_size);
   }
   return *len = rx_size;
 }
@@ -309,20 +317,17 @@ void usbmidi_receive_message_callback(int itf, uint8_t midi_status,
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 static void task_usb_midi(void *pvParameters)
 {
+  (void)pvParameters;
   ESP_LOGD(TAG, "Starting Midi Task");
   usbmidi_init(usbmidi_receive_message_callback,
                usb_write_bytes, usb_get_buffered_data_len, usb_read_bytes);
 
   usbmidi_enable_port(0, 31250);
 
-  TickType_t xLastExecutionTime = xTaskGetTickCount();
-  unsigned ctr = 0;
-
   vTaskDelay(pdMS_TO_TICKS(10));
 
   while (1)
   {
-    uint8_t packet[4];
     // while (tud_midi_available()) {
     //   ESP_LOGD(TAG, "Data available");
     //   tud_midi_packet_read(packet);
