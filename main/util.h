@@ -34,6 +34,9 @@ void handleMidiMessage(uint8_t midi_status, uint8_t *remaining_message, size_t l
 /** Load settings from SPIFFS and apply them. Call at boot to restore saved preferences. */
 void load_settings_at_boot(void);
 
+/** Push current settings.json (or runtime snapshot) to the BLE client as SysEx after connect. */
+void send_ble_settings_snapshot(void);
+
 // Flash Memory Functions
 uint8_t readFromFlash(uint32_t);
 void memcpyram2flash(uint32_t, float[]);

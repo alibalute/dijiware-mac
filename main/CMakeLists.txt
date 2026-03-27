@@ -28,7 +28,7 @@ idf_component_register(SRCS main.c
   settings.c
   midi_player.c
   
-  REQUIRES uartmidi blemidi usb tinyusb esp_tinyusb usbmidi esp_adc esp_http_server bootloader_support app_update esp_hw_support spiffs driver
+  REQUIRES uartmidi blemidi usb tinyusb esp_tinyusb usbmidi esp_adc esp_http_server bootloader_support app_update esp_hw_support spiffs driver mbedtls
   EMBED_TXTFILES "index.html" "images/logo.png"
   
   INCLUDE_DIRS "." )

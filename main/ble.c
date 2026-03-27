@@ -16,6 +16,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+extern void send_ble_settings_snapshot(void);
+
 #define TAG "BLE"
 
 static gpio_num_t btLed = -1;
@@ -53,6 +55,7 @@ void task_ble_midi(void *pvParameters) {
   bool prevConnected = false;
   TickType_t connectTick = 0;
   bool versionSentForSession = false;
+  bool settingsSentForSession = false;
   TickType_t lastVersionTxTick = 0;
 
   while( 1 ) {
@@ -64,8 +67,10 @@ void task_ble_midi(void *pvParameters) {
       connectTick = xTaskGetTickCount();
       lastVersionTxTick = connectTick;
       versionSentForSession = false;
+      settingsSentForSession = false;
     } else if (!bleConnected) {
       versionSentForSession = false;
+      settingsSentForSession = false;
     }
     prevConnected = bleConnected;
 
@@ -75,6 +80,13 @@ void task_ble_midi(void *pvParameters) {
       sendFirmwareVersion();
       lastVersionTxTick = xTaskGetTickCount();
       versionSentForSession = true;
+    }
+
+    /* After FW version, push settings.json (base64 in SysEx) so the app can sync UI. */
+    if (bleConnected && versionSentForSession && !settingsSentForSession &&
+        (xTaskGetTickCount() - connectTick) >= pdMS_TO_TICKS(1600)) {
+      send_ble_settings_snapshot();
+      settingsSentForSession = true;
     }
 
     /* Keep publishing version occasionally so apps that subscribe later still receive it. */

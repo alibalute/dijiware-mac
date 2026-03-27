@@ -14,9 +14,12 @@
 #include "metronome.h"
 
 #include "esp_log.h"
+#include "mbedtls/base64.h"
 
 #include <math.h>
 #include <stdatomic.h>
+#include <stdlib.h>
+#include <string.h>
 #include "main.h"
 
 static const char *TAG = "util";
@@ -314,6 +317,97 @@ static void apply_loaded_settings(cJSON *loaded_settings) {
     { int v = get_numerical_setting(loaded_settings, "metronomeBpm"); handleMessage(0x4F, (uint8_t)v); }
     { int v = get_numerical_setting(loaded_settings, "metronomeBeats"); handleMessage(0x50, (uint8_t)v); }
     { int v = get_numerical_setting(loaded_settings, "metronomeVol"); handleMessage(0x51, (uint8_t)v); }
+}
+
+/** Same fields as save (0x54 data==1); used when settings.json is missing. */
+static cJSON *build_runtime_settings_json(void)
+{
+    cJSON *out = cJSON_CreateObject();
+    if (!out) {
+        return NULL;
+    }
+    cJSON_AddNumberToObject(out, "instrument", synthInstrument);
+    cJSON_AddNumberToObject(out, "chords", (int)chordEnabled);
+    cJSON_AddNumberToObject(out, "tuning", tuningIndex);
+    cJSON_AddNumberToObject(out, "tapping", (int)hammerOnEnabled);
+    cJSON_AddNumberToObject(out, "transpose", transposeValue);
+    cJSON_AddNumberToObject(out, "vibrato", vibratoValue);
+    cJSON_AddNumberToObject(out, "leftHand", (int)leftHandEnabled);
+    cJSON_AddNumberToObject(out, "quarterTones", (int)quarterNotesEnabled);
+    cJSON_AddNumberToObject(out, "staccato", (int)staccatoEnable);
+    cJSON_AddNumberToObject(out, "sustain", (int)sustainEnabled);
+    cJSON_AddNumberToObject(out, "resonate", (int)resonateEnabled);
+    cJSON_AddNumberToObject(out, "percussion", (int)percussionInstrument);
+    cJSON_AddNumberToObject(out, "tapWithoutStrum", (int)tapWithoutStrumEnabled);
+    cJSON_AddNumberToObject(out, "pitchSystem", pitchSystem);
+    cJSON_AddNumberToObject(out, "constantVelocity", (int)constantVelocityEnable);
+    cJSON_AddNumberToObject(out, "effects", (int)effectsEnabled);
+    cJSON_AddNumberToObject(out, "pitchChange", pitchChangeValue);
+    {
+        int ch = (semitoneChannel == MIDI_CHANNEL_1) ? 0 : (semitoneChannel == MIDI_CHANNEL_3) ? 1 : (semitoneChannel == MIDI_CHANNEL_5) ? 2 : (semitoneChannel == MIDI_CHANNEL_7) ? 3 : 0;
+        cJSON_AddNumberToObject(out, "midiChannel", ch);
+    }
+    cJSON_AddNumberToObject(out, "string1", (int)stringEnabledArray[0]);
+    cJSON_AddNumberToObject(out, "string2", (int)stringEnabledArray[1]);
+    cJSON_AddNumberToObject(out, "string3", (int)stringEnabledArray[2]);
+    cJSON_AddNumberToObject(out, "string4", (int)stringEnabledArray[3]);
+    cJSON_AddNumberToObject(out, "metronomeBpm", get_metronome_bpm());
+    cJSON_AddNumberToObject(out, "metronomeBeats", get_metronome_numBeats());
+    cJSON_AddNumberToObject(out, "metronomeVol", get_metronome_volume());
+    return out;
+}
+
+void send_ble_settings_snapshot(void)
+{
+    if (!isBLEConnected()) {
+        return;
+    }
+    init_spiffs();
+    cJSON *j = load_settings_from_flash("/spiffs/settings.json");
+    if (j == NULL) {
+        j = build_runtime_settings_json();
+    }
+    if (j == NULL) {
+        ESP_LOGW(TAG, "BLE settings snapshot: no JSON");
+        return;
+    }
+    char *plain = cJSON_PrintUnformatted(j);
+    cJSON_Delete(j);
+    if (plain == NULL) {
+        return;
+    }
+    size_t inlen = strlen(plain);
+    size_t b64_cap = 4 * ((inlen + 2) / 3) + 8;
+    uint8_t *b64 = (uint8_t *)malloc(b64_cap);
+    if (b64 == NULL) {
+        cJSON_free(plain);
+        return;
+    }
+    size_t olen = 0;
+    int br = mbedtls_base64_encode(b64, b64_cap, &olen, (unsigned char *)plain, inlen);
+    cJSON_free(plain);
+    if (br != 0) {
+        free(b64);
+        ESP_LOGW(TAG, "BLE settings snapshot: base64 failed %d", br);
+        return;
+    }
+    /* SysEx: F0 7D 53 53 + base64(JSON) + F7 (educational ID 0x7D, 'SS' = settings sync) */
+    size_t syx_len = 4 + olen + 1;
+    uint8_t *syx = (uint8_t *)malloc(syx_len);
+    if (syx == NULL) {
+        free(b64);
+        return;
+    }
+    syx[0] = 0xF0;
+    syx[1] = 0x7D;
+    syx[2] = 0x53;
+    syx[3] = 0x53;
+    memcpy(syx + 4, b64, olen);
+    syx[4 + olen] = 0xF7;
+    free(b64);
+    blemidi_send_message(0, syx, syx_len);
+    free(syx);
+    ESP_LOGI(TAG, "BLE settings snapshot sent (%u bytes sysex)", (unsigned)syx_len);
 }
 
 void load_settings_at_boot(void) {
@@ -949,37 +1043,11 @@ void handleMessage(int8_t code, int8_t data){
             // Initialize SPIFFS
             init_spiffs();
 
-            // Create JSON with all settings
-            settings = cJSON_CreateObject();
-            cJSON_AddNumberToObject(settings, "instrument", synthInstrument);
-            cJSON_AddNumberToObject(settings, "chords", (int)chordEnabled);
-            cJSON_AddNumberToObject(settings, "tuning", tuningIndex);
-            cJSON_AddNumberToObject(settings, "tapping", (int)hammerOnEnabled);
-            cJSON_AddNumberToObject(settings, "transpose", transposeValue);
-            cJSON_AddNumberToObject(settings, "vibrato", vibratoValue);
-            cJSON_AddNumberToObject(settings, "leftHand", (int)leftHandEnabled);
-            cJSON_AddNumberToObject(settings, "quarterTones", (int)quarterNotesEnabled);
-            cJSON_AddNumberToObject(settings, "staccato", (int)staccatoEnable);
-            cJSON_AddNumberToObject(settings, "sustain", (int)sustainEnabled);
-            cJSON_AddNumberToObject(settings, "resonate", (int)resonateEnabled);
-            cJSON_AddNumberToObject(settings, "percussion", (int)percussionInstrument);
-            cJSON_AddNumberToObject(settings, "tapWithoutStrum", (int)tapWithoutStrumEnabled);
-            cJSON_AddNumberToObject(settings, "pitchSystem", pitchSystem);
-            cJSON_AddNumberToObject(settings, "constantVelocity", (int)constantVelocityEnable);
-            cJSON_AddNumberToObject(settings, "effects", (int)effectsEnabled);
-            cJSON_AddNumberToObject(settings, "pitchChange", pitchChangeValue);
-            /* MIDI channel pair: 0->ch1/2, 1->ch3/4, 2->ch5/6, 3->ch7/8 */
-            {
-                int ch = (semitoneChannel == MIDI_CHANNEL_1) ? 0 : (semitoneChannel == MIDI_CHANNEL_3) ? 1 : (semitoneChannel == MIDI_CHANNEL_5) ? 2 : (semitoneChannel == MIDI_CHANNEL_7) ? 3 : 0;
-                cJSON_AddNumberToObject(settings, "midiChannel", ch);
+            settings = build_runtime_settings_json();
+            if (settings == NULL) {
+                ESP_LOGE(TAG, "Save settings: alloc failed");
+                return;
             }
-            cJSON_AddNumberToObject(settings, "string1", (int)stringEnabledArray[0]);
-            cJSON_AddNumberToObject(settings, "string2", (int)stringEnabledArray[1]);
-            cJSON_AddNumberToObject(settings, "string3", (int)stringEnabledArray[2]);
-            cJSON_AddNumberToObject(settings, "string4", (int)stringEnabledArray[3]);
-            cJSON_AddNumberToObject(settings, "metronomeBpm", get_metronome_bpm());
-            cJSON_AddNumberToObject(settings, "metronomeBeats", get_metronome_numBeats());
-            cJSON_AddNumberToObject(settings, "metronomeVol", get_metronome_volume());
 
             // Save settings to flash
             if (save_settings_to_flash("/spiffs/settings.json", settings)) {
