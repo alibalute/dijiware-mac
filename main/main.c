@@ -62,6 +62,8 @@ static gptimer_handle_t gptimer = NULL;
 bool externalPowerChange = false;
 volatile bool muted = false;
 char appVersion[32];
+static uint8_t fwVerMajor = 0, fwVerMinor = 0, fwVerPatch = 0;
+static bool fwVersionParsed = false;
 
 TaskHandle_t xWifiTask, xETarTask, xBatteryTask, xVolumeTask, xButtonsTask, xTimerTask, xGuiTask ;
 
@@ -427,8 +429,14 @@ void batteryTask(void *pvParamter) {
     bytes[0] = 0x56;          //midi status code for battery level
     bytes[1] = batteryLevel; //this is calculated in led.c
     bytes[2] = 0;
-
     blemidi_send_message(0 , bytes, 3); //send battery level to the ble app
+
+    /* Send firmware version in same BLE stream as battery status so app always receives it. */
+    if (fwVersionParsed) {
+      bytes[0] = 0x57; bytes[1] = fwVerMajor; bytes[2] = 0; blemidi_send_message(0, bytes, 3);
+      bytes[0] = 0x58; bytes[1] = fwVerMinor; bytes[2] = 0; blemidi_send_message(0, bytes, 3);
+      bytes[0] = 0x59; bytes[1] = fwVerPatch; bytes[2] = 0; blemidi_send_message(0, bytes, 3);
+    }
 
     vTaskDelay(pdMS_TO_TICKS(5000U));
   }
@@ -757,6 +765,22 @@ void app_main(void) {
   const esp_app_desc_t *appDesc = esp_app_get_description();
   strcpy(appVersion, appDesc->version);
   ESP_LOGD(TAG, "App version %s", appVersion);
+  {
+    unsigned maj = 0, min = 0, pat = 0;
+    if (sscanf(appVersion, "%u.%u.%u", &maj, &min, &pat) == 3) {
+      if (maj > 127) maj = 127;
+      if (min > 127) min = 127;
+      if (pat > 127) pat = 127;
+      fwVerMajor = (uint8_t)maj;
+      fwVerMinor = (uint8_t)min;
+      fwVerPatch = (uint8_t)pat;
+      fwVersionParsed = true;
+      ESP_LOGI(TAG, "FW version parsed %u.%u.%u", maj, min, pat);
+    } else {
+      fwVersionParsed = false;
+      ESP_LOGW(TAG, "FW version parse failed for '%s'", appVersion);
+    }
+  }
 
   gpio_init();
 

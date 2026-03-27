@@ -14,34 +14,82 @@
 #include "interfaces.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #define TAG "BLE"
 
 static gpio_num_t btLed = -1;
 
 extern void handleMidiMessage(uint8_t midi_status, uint8_t *remaining_message, size_t len, size_t continued_sysex_pos);
+extern char appVersion[];
 
 static bool bleConnected = false;
+
+/* Private BLE status codes for app telemetry (carried over BLE-MIDI characteristic):
+ * 0x57 -> firmware major, 0x58 -> minor, 0x59 -> patch. */
+static void sendFirmwareVersion(void) {
+  unsigned major = 0, minor = 0, patch = 0;
+  if (sscanf(appVersion, "%u.%u.%u", &major, &minor, &patch) != 3) {
+    ESP_LOGW(TAG, "Could not parse appVersion '%s'", appVersion);
+    return;
+  }
+  if (major > 127) major = 127;
+  if (minor > 127) minor = 127;
+  if (patch > 127) patch = 127;
+
+  uint8_t msg[3];
+  msg[2] = 0;
+
+  msg[0] = 0x57; msg[1] = (uint8_t)major; blemidi_send_message(0, msg, sizeof(msg));
+  msg[0] = 0x58; msg[1] = (uint8_t)minor; blemidi_send_message(0, msg, sizeof(msg));
+  msg[0] = 0x59; msg[1] = (uint8_t)patch; blemidi_send_message(0, msg, sizeof(msg));
+  ESP_LOGI(TAG, "Sent FW version %u.%u.%u over BLE", major, minor, patch);
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // This task is periodically called to send a MIDI message
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void task_ble_midi(void *pvParameters) {
-  TickType_t xLastExecutionTime;
-  unsigned ctr = 0;
-
-  // Initialise the xLastExecutionTime variable on task entry
-  xLastExecutionTime = xTaskGetTickCount();
+  bool prevConnected = false;
+  TickType_t connectTick = 0;
+  bool versionSentForSession = false;
+  TickType_t lastVersionTxTick = 0;
 
   while( 1 ) {
     // vTaskDelayUntil(&xLastExecutionTime, pdMS_TO_TICKS(500));
 
     blemidi_tick(); // for timestamp and output buffer handling
+
+    if (bleConnected && !prevConnected) {
+      connectTick = xTaskGetTickCount();
+      lastVersionTxTick = connectTick;
+      versionSentForSession = false;
+    } else if (!bleConnected) {
+      versionSentForSession = false;
+    }
+    prevConnected = bleConnected;
+
+    /* Give app a moment to register notification handler after connect. */
+    if (bleConnected && !versionSentForSession &&
+        (xTaskGetTickCount() - connectTick) >= pdMS_TO_TICKS(1200)) {
+      sendFirmwareVersion();
+      lastVersionTxTick = xTaskGetTickCount();
+      versionSentForSession = true;
+    }
+
+    /* Keep publishing version occasionally so apps that subscribe later still receive it. */
+    if (bleConnected &&
+        (xTaskGetTickCount() - lastVersionTxTick) >= pdMS_TO_TICKS(5000)) {
+      sendFirmwareVersion();
+      lastVersionTxTick = xTaskGetTickCount();
+    }
+
     vTaskDelay(pdMS_TO_TICKS(10)); //100 makes it laggy, 1 increases chance of freezing
   
 #if 0
+    unsigned ctr = 0;
     ctr += 1;
-    ESP_LOGI(TAG, "Sending MIDI Note #%d", ctr);
+    ESP_LOGI(TAG, "Sending MIDI Note #%u", ctr);
 
     {
       // TODO: more comfortable packet creation via special APIs
