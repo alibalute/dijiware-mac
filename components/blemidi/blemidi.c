@@ -558,6 +558,12 @@ static int32_t blemidi_receive_packet(uint8_t blemidi_port, uint8_t *stream,
           if (num_bytes == 0) {  // System Message
             num_bytes = midi_expected_bytes_system[midi_status & 0xf];
           }
+          /* Standard MIDI uses 0xFE as Active Sensing (0 data bytes). This
+           * project sends 0xFE + 2 bytes for eTar BLE control (see handleMidiMessage
+           * in util.c). When two payload bytes are present, consume them. */
+          if (midi_status == 0xfe && (len - pos) >= 2) {
+            num_bytes = 2;
+          }
 
           if ((pos + num_bytes) > len) {
             ESP_LOGE(TAG, "missing %d bytes in parsed message", num_bytes);
