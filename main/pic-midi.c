@@ -309,6 +309,88 @@ uint8_t findVelocity(float avg, float pot_mid_value, uint8_t prev_velocity) {
     return (uint8_t)velocityVal;
 }
 
+/* ---- Sympathetic string resonance: MIDI channel 16 (avoids same-key retrigger on main channel) ---- */
+#define CHANNEL_SYMPATHETIC MIDI_CHANNEL_16
+#define SYMPATHETIC_VELOCITY_PERCENT 50
+
+static uint8_t sympNoteCount[4] = {0, 0, 0, 0};
+static uint8_t sympMidi[4][4];
+
+/** MIDI note number (12-TET) of string [si] at fret 0; matches getNote() for noteOffset==0. */
+static uint8_t open_string_midi12(uint8_t si)
+{
+    uint16_t tempNote = workingBaseTable[si];
+    uint8_t n = (uint8_t)(tempNote / 2);
+    if (!quarterNotesEnabled && (tempNote % 2 == 1)) {
+        n = (uint8_t)(n + 1);
+    }
+    return n;
+}
+
+/** noteIn24 for string [si] at fret 0; matches getNote() mapping from workingBaseTable. */
+static uint8_t open_string_note24(uint8_t si)
+{
+    uint16_t tempNote = workingBaseTable[si];
+    uint8_t n = (uint8_t)(tempNote / 2);
+    if (!quarterNotesEnabled) {
+        if (tempNote % 2 == 1) {
+            n = (uint8_t)(n + 1);
+        }
+        return (uint8_t)(n * 2);
+    }
+    if ((tempNote % 2) == 0) {
+        return (uint8_t)(n * 2);
+    }
+    return (uint8_t)(n * 2 + 1);
+}
+
+/**
+ * Other strings whose open fundamental is unison or an octave below the played pitch:
+ * quiet note-on on MIDI channel 16 with pitch bend for that string's open (independent of main).
+ */
+static void send_sympathetic_string_resonance(uint8_t strumStringIdx, uint8_t note12, uint8_t velocityValue,
+                                              uint16_t pitchBend_mode)
+{
+    if (!resonateEnabled || !pluckedInstrument || percussionInstrument || chordEnabled) {
+        sympNoteCount[strumStringIdx] = 0;
+        return;
+    }
+    sympNoteCount[strumStringIdx] = 0;
+    for (uint8_t si = 0; si < 4; si++) {
+        if (si == strumStringIdx) {
+            continue;
+        }
+        if (!stringEnabledArray[si]) {
+            continue;
+        }
+        uint8_t openMidi = open_string_midi12(si);
+        if (note12 < openMidi || (note12 - openMidi) % 12 != 0) {
+            continue;
+        }
+        uint8_t sv = (uint8_t)((velocityValue * SYMPATHETIC_VELOCITY_PERCENT) / 100);
+        if (sv < 8) {
+            sv = 8;
+        }
+        if (sympNoteCount[strumStringIdx] < 4) {
+            uint8_t sym24 = open_string_note24(si);
+            uint16_t symPb;
+            if (pitchBend_mode == NOTE_SEMITONE) {
+                symPb = PBCenter + PBCenterOffset +
+                        (2 * (pitchAdjustment[pitchSystem][(sym24 % 24)])) + fineTuningPB;
+            } else {
+                symPb = (PBCenter + PBCenterOffset + PBQuarterToneOffset) +
+                        (2 * (pitchAdjustment[pitchSystem][(sym24 % 24)])) + fineTuningPB;
+            }
+            sympMidi[strumStringIdx][sympNoteCount[strumStringIdx]++] = openMidi;
+            midiTx(0xE, 0xE0 + CHANNEL_SYMPATHETIC, (symPb & 0xFF), (symPb & 0xFF00) >> 8);
+            midiTx(0x9, 0x90 + CHANNEL_SYMPATHETIC, openMidi, sv);
+#ifdef uart_en
+            inputToUART(0xE0 + CHANNEL_SYMPATHETIC, (symPb & 0xFF), (symPb & 0xFF00) >> 8);
+            inputToUART(0x90 + CHANNEL_SYMPATHETIC, openMidi, sv);
+#endif
+        }
+    }
+}
 
 
 /**
@@ -461,6 +543,7 @@ void noteOn(STRUM * strum, uint8_t c, uint8_t r) {
 
 
 #endif
+            send_sympathetic_string_resonance(c, note12, velocityValue, pitchBend);
 
     }else{ //if chord enabled
         for(n=1; n<=chordTable[chordType][CHORD_NUM_OF_NOTES]; n++){
@@ -776,6 +859,16 @@ void noteOff(STRUM * strum, uint8_t c, uint8_t r) {
             }
             adjustedPitchBend = (PBCenter+PBCenterOffset+PBQuarterToneOffset)+
                     (2*(pitchAdjustment[pitchSystem][ (note24 % 24) ])) + fineTuningPB;
+        }
+
+        if (resonateEnabled && pluckedInstrument && !percussionInstrument) {
+            for (uint8_t k = 0; k < sympNoteCount[c]; k++) {
+                midiTx(0x8, 0x80 + CHANNEL_SYMPATHETIC, sympMidi[c][k], 0x7F);
+#ifdef uart_en
+                inputToUART(0x80 + CHANNEL_SYMPATHETIC, sympMidi[c][k], 0x7F);
+#endif
+            }
+            sympNoteCount[c] = 0;
         }
 
         midiTx(0xE, 0xE0+channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
