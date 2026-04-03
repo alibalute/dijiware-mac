@@ -1767,15 +1767,13 @@ void changeSetting(TAP *tap, uint8_t atString) {
         handleMessage(0x34, EDO_51_SHARIF_PITCH);  // persian 2 -sharif
       break;
     case 9:
-      // Accessory 9
+      /* MIDI strum-step: strum advances through note-ons in the file chosen via app (0x53). */
       if (atString == 0)
-        handleMessage(0x34, EDO_24_PITCH);  // 24-edo
+        handleMessage(0x57, 1); /* enable */
       else if (atString == 1)
-        handleMessage(0x34, EDO_51_TURKISH_PITCH);  // 51- edo-turkish
+        handleMessage(0x57, 0); /* disable */
       else if (atString == 2)
-        handleMessage(0x34, JAZAYERI_PITCH);  // persian 1 -jazayeri
-      else if (atString == 3)
-        handleMessage(0x34, EDO_51_SHARIF_PITCH);  // persian 2 -sharif
+        handleMessage(0x57, 2); /* reset to first note */
       break;
 
       

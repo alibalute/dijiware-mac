@@ -520,6 +520,21 @@ static int32_t blemidi_receive_packet(uint8_t blemidi_port, uint8_t *stream,
       uint8_t midi_status = continued_sysex ? 0xf0 : 0x00;
 
       while (pos < len) {
+        /* SysEx End (0xF7) must not be treated as a BLE-MIDI timestamp byte.
+         * Timestamp bytes are 0x80–0xFF with running time; 0xF7 ends SysEx and
+         * must be delivered to the app (e.g. Diji MIDI upload F0…F7 framing). */
+        if (stream[pos] == 0xf7) {
+          if (callback_midi_message_received) {
+            callback_midi_message_received(
+                blemidi_port, timestamp, 0xf7, NULL, 0,
+                blemidi_continued_sysex_pos[blemidi_port]);
+          }
+          pos++;
+          blemidi_continued_sysex_pos[blemidi_port] = 0;
+          continued_sysex = 0;
+          continue;
+        }
+
         if (!(stream[pos] & 0x80)) {
           if (!continued_sysex) {
             ESP_LOGE(TAG, "missing timestampLow in parsed message");

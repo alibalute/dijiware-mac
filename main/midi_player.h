@@ -12,6 +12,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 
 typedef struct {
@@ -23,6 +24,8 @@ typedef struct {
 } MidiEvent;
 
 void play_midi_file(void); //plays the midi file loaded into char * midiFile
+/** Load midiFile into events[] (used by play and strum-step mode). Returns 0 on success. */
+int midi_parse_current_file(void);
 
 uint32_t read_variable_length(FILE *file);
 
@@ -35,5 +38,13 @@ extern bool midiPause;
 extern bool midiStop;
 extern void inputToUART(uint8_t, uint8_t, uint8_t);
 extern uint32_t millis(void);
+
+/** Strum-step mode: each strum plays next note-on from current midiFile (handleMessage 0x57; 0x56 is sympathetic volume). */
+extern bool midi_strum_step_mode;
+
+void midi_strum_step_set_enabled(bool enable);
+void midi_strum_step_reset_index(void);
+/** Advance to next note-on in parsed file and send it. Returns true if a note was sent. */
+bool midi_strum_step_try_note(void);
 
 

@@ -18,6 +18,7 @@
 #include "mbedtls/base64.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1060,7 +1061,23 @@ void handleMessage(int8_t code, int8_t data){
         // Use sprintf to concatenate strings
         sprintf(fileName, "/spiffs/%d.mid", data); //data is the index of midi file in the spiffs e.g. /spiffs/1.mid
         setMidiFile(fileName);
+        /* Always reload events[] from disk so Play / strum-step use the selected file (not a stale parse). */
+        if (midi_parse_current_file() == 0) {
+            if (midi_strum_step_mode) {
+                midi_strum_step_reset_index();
+            }
+        }
 
+    }
+    /* MIDI strum-step (0x57): 0x56 is sympathetic volume — do not overload. */
+    else if (code == 0x57) {
+        if (data == 0) {
+            midi_strum_step_set_enabled(false);
+        } else if (data == 1) {
+            midi_strum_step_set_enabled(true);
+        } else if (data == 2) {
+            midi_strum_step_reset_index();
+        }
     }
     //save/load settings
     else if(code==0x54)  //this doesnt exist on eTar app yet
@@ -1539,11 +1556,233 @@ float fAbsoluteDiff(float x, float y) {
 	}
 }
 
+/* ---- DijiApp: SPIFFS MIDI upload over BLE/USB (SysEx, educational ID 0x7D, 'MI') ----
+ * Wire format (payload between F0 and F7 is 7-bit safe; data chunks use base64):
+ *   F0 7D 4D 49 01 [slot 1-4] [total_size BE32] F7  — begin session
+ * NOTE: BE32 cannot be sent raw over BLE-MIDI because any payload byte >= 0x80
+ * prematurely terminates the SysEx body in the BLE-MIDI parser. We therefore
+ * encode total_size as 4x7-bit bytes:
+ *   total_size = (b0<<21)|(b1<<14)|(b2<<7)|b3  where each bi is in [0..127].
+ *   F0 7D 4D 49 02 [slot] [base64 of next raw chunk] F7  — append (in order)
+ *   F0 7D 4D 49 03 [slot] F7  — write /spiffs/slot.mid if complete
+ */
+#define DIJI_MIDI_UPLOAD_MAX (256 * 1024)
+#define DIJI_SYSEX_ACC_MAX 512
 
+static uint8_t s_diji_sysex_acc[DIJI_SYSEX_ACC_MAX];
+static size_t s_diji_sysex_acc_len;
+
+static uint8_t *s_midi_upload_buf = NULL;
+static size_t s_midi_upload_expected;
+static size_t s_midi_upload_append_pos;
+static uint8_t s_midi_upload_slot;
+
+static uint32_t decode_size_7bit(const uint8_t *p) {
+  return ((uint32_t)(p[0] & 0x7f) << 21) |
+         ((uint32_t)(p[1] & 0x7f) << 14) |
+         ((uint32_t)(p[2] & 0x7f) << 7) |
+         (uint32_t)(p[3] & 0x7f);
+}
+
+static void diji_midi_upload_free_session(void) {
+  free(s_midi_upload_buf);
+  s_midi_upload_buf = NULL;
+  s_midi_upload_expected = 0;
+  s_midi_upload_append_pos = 0;
+  s_midi_upload_slot = 0;
+}
+
+/** If SPIFFS file at [path] is the active midiFile, re-parse so playback uses new bytes after overwrite. */
+static void diji_refresh_parsed_midi_if_path_matches(const char *path) {
+  if (path == NULL || midiFile == NULL) {
+    return;
+  }
+  if (strcmp(midiFile, path) != 0) {
+    return;
+  }
+  if (midi_parse_current_file() == 0 && midi_strum_step_mode) {
+    midi_strum_step_reset_index();
+  }
+}
+
+static void process_diji_midi_upload_sysex(const uint8_t *data, size_t dlen) {
+  if (dlen < 4) {
+    return;
+  }
+  if (data[0] != 0x7D || data[1] != 0x4D || data[2] != 0x49) {
+    return;
+  }
+  uint8_t cmd = data[3];
+  if (cmd == 0x01) {
+    if (dlen < 9) {
+      ESP_LOGW(TAG, "MIDI upload BEGIN: short message");
+      return;
+    }
+    uint8_t slot = data[4];
+    uint32_t sz = decode_size_7bit(data + 5);
+    diji_midi_upload_free_session();
+    if (slot < 1 || slot > 4) {
+      ESP_LOGW(TAG, "MIDI upload BEGIN: bad slot %u", (unsigned)slot);
+      return;
+    }
+    if (sz == 0 || sz > DIJI_MIDI_UPLOAD_MAX) {
+      ESP_LOGW(TAG, "MIDI upload BEGIN: bad size %lu", (unsigned long)sz);
+      return;
+    }
+    s_midi_upload_buf = (uint8_t *)malloc(sz);
+    if (s_midi_upload_buf == NULL) {
+      ESP_LOGE(TAG, "MIDI upload BEGIN: malloc failed");
+      return;
+    }
+    memset(s_midi_upload_buf, 0, sz);
+    s_midi_upload_expected = sz;
+    s_midi_upload_append_pos = 0;
+    s_midi_upload_slot = slot;
+    ESP_LOGI(TAG, "MIDI upload BEGIN slot=%u size=%lu", (unsigned)slot, (unsigned long)sz);
+    return;
+  }
+  if (cmd == 0x02) {
+    if (dlen < 6) {
+      ESP_LOGW(TAG, "MIDI upload DATA: short message");
+      diji_midi_upload_free_session();
+      return;
+    }
+    uint8_t slot = data[4];
+    if (s_midi_upload_buf == NULL || slot != s_midi_upload_slot) {
+      ESP_LOGW(TAG, "MIDI upload DATA: no session or slot mismatch");
+      diji_midi_upload_free_session();
+      return;
+    }
+    const uint8_t *b64_in = data + 5;
+    size_t b64_len = dlen - 5;
+    if (b64_len == 0) {
+      ESP_LOGW(TAG, "MIDI upload DATA: empty b64");
+      diji_midi_upload_free_session();
+      return;
+    }
+    size_t dec_cap = (b64_len * 3) / 4 + 4;
+    uint8_t *tmp = (uint8_t *)malloc(dec_cap);
+    if (tmp == NULL) {
+      ESP_LOGE(TAG, "MIDI upload DATA: tmp malloc failed");
+      diji_midi_upload_free_session();
+      return;
+    }
+    size_t olen = 0;
+    int dr = mbedtls_base64_decode(tmp, dec_cap, &olen, b64_in, b64_len);
+    if (dr != 0) {
+      ESP_LOGW(TAG, "MIDI upload DATA: base64 decode failed %d", dr);
+      free(tmp);
+      diji_midi_upload_free_session();
+      return;
+    }
+    if (s_midi_upload_append_pos + olen > s_midi_upload_expected) {
+      ESP_LOGW(TAG, "MIDI upload DATA: overflow append");
+      free(tmp);
+      diji_midi_upload_free_session();
+      return;
+    }
+    memcpy(s_midi_upload_buf + s_midi_upload_append_pos, tmp, olen);
+    s_midi_upload_append_pos += olen;
+    free(tmp);
+    return;
+  }
+  if (cmd == 0x03) {
+    if (dlen < 5) {
+      ESP_LOGW(TAG, "MIDI upload COMMIT: short message");
+      diji_midi_upload_free_session();
+      return;
+    }
+    uint8_t slot = data[4];
+    if (s_midi_upload_buf == NULL || slot != s_midi_upload_slot) {
+      ESP_LOGW(TAG, "MIDI upload COMMIT: no session or slot mismatch");
+      diji_midi_upload_free_session();
+      return;
+    }
+    if (s_midi_upload_append_pos != s_midi_upload_expected) {
+      ESP_LOGW(TAG, "MIDI upload COMMIT: incomplete (%u != %u)",
+               (unsigned)s_midi_upload_append_pos, (unsigned)s_midi_upload_expected);
+      diji_midi_upload_free_session();
+      return;
+    }
+    char path[32];
+    snprintf(path, sizeof(path), "/spiffs/%u.mid", (unsigned)slot);
+    init_spiffs();
+    /* Replace in-place so SPIFFS/VFS see a new file body (avoids stale reads of old content). */
+    (void)remove(path);
+    FILE *f = fopen(path, "wb");
+    if (f == NULL) {
+      ESP_LOGE(TAG, "MIDI upload COMMIT: fopen %s failed", path);
+      diji_midi_upload_free_session();
+      return;
+    }
+    size_t wr = fwrite(s_midi_upload_buf, 1, s_midi_upload_expected, f);
+    fclose(f);
+    if (wr != s_midi_upload_expected) {
+      ESP_LOGE(TAG, "MIDI upload COMMIT: fwrite %s incomplete", path);
+      diji_midi_upload_free_session();
+      return;
+    }
+    ESP_LOGI(TAG, "MIDI upload COMMIT: wrote %s (%u bytes)", path, (unsigned)wr);
+
+    /* Debug: verify basic SMF header so we know upload isn't corrupted. */
+    {
+      FILE *vr = fopen(path, "rb");
+      if (vr == NULL) {
+        ESP_LOGW(TAG, "MIDI upload COMMIT: reopen %s failed", path);
+      } else {
+        uint8_t sig[4] = {0};
+        uint8_t header_length_be[4] = {0};
+        uint8_t hd[6] = {0};
+        size_t r1 = fread(sig, 1, 4, vr);
+        size_t r2 = fread(header_length_be, 1, 4, vr);
+        size_t r3 = fread(hd, 1, 6, vr);
+        fclose(vr);
+        if (r1 == 4 && r2 == 4 && r3 == 6 && sig[0] == 'M' && sig[1] == 'T' &&
+            sig[2] == 'h' && sig[3] == 'd') {
+          uint32_t header_len = (uint32_t)header_length_be[0] << 24 |
+                                 (uint32_t)header_length_be[1] << 16 |
+                                 (uint32_t)header_length_be[2] << 8 |
+                                 (uint32_t)header_length_be[3];
+          uint16_t format = (uint16_t)hd[0] << 8 | hd[1];
+          uint16_t tracks = (uint16_t)hd[2] << 8 | hd[3];
+          uint16_t division = (uint16_t)hd[4] << 8 | hd[5];
+          ESP_LOGI(TAG, "MIDI upload COMMIT: header ok format=%u tracks=%u division=%u headerLen=%lu",
+                   (unsigned)format, (unsigned)tracks, (unsigned)division, (unsigned long)header_len);
+        } else {
+          ESP_LOGW(TAG, "MIDI upload COMMIT: invalid SMF header after write (sig=%02x %02x %02x %02x r1=%u r2=%u r3=%u)",
+                   sig[0], sig[1], sig[2], sig[3], (unsigned)r1, (unsigned)r2, (unsigned)r3);
+        }
+      }
+    }
+
+    diji_refresh_parsed_midi_if_path_matches(path);
+    diji_midi_upload_free_session();
+    return;
+  }
+}
 
 void handleMidiMessage(uint8_t midi_status, uint8_t *msg, size_t len, size_t continued_sysex_pos)
 {
-  (void)continued_sysex_pos;
+  if (midi_status == 0xf0 && len > 0) {
+    if (continued_sysex_pos == 0) {
+      s_diji_sysex_acc_len = 0;
+    }
+    if (s_diji_sysex_acc_len + len > DIJI_SYSEX_ACC_MAX) {
+      ESP_LOGW(TAG, "Diji sysex accumulator overflow");
+      s_diji_sysex_acc_len = 0;
+      return;
+    }
+    memcpy(s_diji_sysex_acc + s_diji_sysex_acc_len, msg, len);
+    s_diji_sysex_acc_len += len;
+    return;
+  }
+  if (midi_status == 0xf7) {
+    if (s_diji_sysex_acc_len > 0) {
+      process_diji_midi_upload_sysex(s_diji_sysex_acc, s_diji_sysex_acc_len);
+    }
+    s_diji_sysex_acc_len = 0;
+    return;
+  }
   // ESP_LOGD(TAG,"Status %d [%d,%d]",midi_status,msg[0],msg[1]);
   if (midi_status>=0x80 && midi_status<=0xbf) {
     if (len==2) {

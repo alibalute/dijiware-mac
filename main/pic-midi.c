@@ -2,6 +2,7 @@
 #include "util.h"
 #include "pic-midi.h"
 #include "midi_recorder.h"
+#include "midi_player.h"
 #include "usbmidi.h"
 #include "esp_log.h"
 #if defined(__APPLE__) || defined(IDF_HOST_PARSING)
@@ -419,6 +420,9 @@ void noteOn(STRUM * strum, uint8_t c, uint8_t r) {
     s_noteon_count++;
     if (s_noteon_count % 300 == 0) {
         ESP_LOGI(TAG, "freeze ckpt noteOn n=%lu c=%u", (unsigned long)s_noteon_count, (unsigned)c);
+    }
+    if (midi_strum_step_mode && midi_strum_step_try_note()) {
+        return;
     }
     uint8_t n;
     uint8_t channel = semitoneChannel;
