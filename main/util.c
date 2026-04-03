@@ -10,6 +10,7 @@
 #include "cJSON.h"
 #include "settings.h"
 #include "midi_player.h"
+#include "midi_recorder.h"
 #include "spiffs.h"
 #include "metronome.h"
 
@@ -1017,10 +1018,15 @@ void handleMessage(int8_t code, int8_t data){
     //rec/play
     else if(code==0x52)  //this doesnt exist on eTar app yet
     {
-        if (data == 0){ //rec
+        if (data == 0){ //rec — capture live MIDI from midiTx until stop
+            midiStop = true;
+            midi_recorder_start();
         }
-        else if (data == 1){//stop
-             midiStop = true;   
+        else if (data == 1){//stop playback and finalize recording if armed
+            if (midi_recorder_is_active()) {
+                midi_recorder_stop_and_finalize();
+            }
+            midiStop = true;
         }
 
         else if(data == 2){//play
@@ -1585,6 +1591,14 @@ void inputToUART(uint8_t byte1, uint8_t byte2, uint8_t byte3) {
   bytes[0] = byte1;
   bytes[1] = byte2;
   bytes[2] = byte3;
+
+  /* Record the same bytes sent to UART/BLE (note on/off, pitch bend). */
+  {
+    uint8_t st = (uint8_t)(byte1 & 0xF0);
+    if (st == 0x80 || st == 0x90 || st == 0xE0) {
+      midi_recorder_capture(byte1, byte2, byte3);
+    }
+  }
 
   int ret;
   int last_ret = 0;

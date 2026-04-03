@@ -8,7 +8,7 @@
  * Copyright (c) 2023 elemental ID
  *
  */
-#include <stdio.h>status
+#include <stdio.h>
 #include "esp_log.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -66,129 +66,130 @@ void play_midi_file(void) {
         return;
     }
 
-    // Read and validate the header chunk
-    uint8_t header[4];
-    fread(header, 1, 4, file);
-
-    if (header[0] != 'M' || header[1] != 'T' || header[2] != 'h' || header[3] != 'd') {
-        printf("Invalid MIDI file format: Main header\n");
+    uint8_t sig[4];
+    if (fread(sig, 1, 4, file) != 4 || sig[0] != 'M' || sig[1] != 'T' || sig[2] != 'h' || sig[3] != 'd') {
+        ESP_LOGW(TAG, "Invalid MIDI: missing MThd");
         fclose(file);
         return;
     }
 
-    format = (header[8] << 8) | header[9];
-    tracks = (header[10] << 8) | header[11];
-    division = (header[12] << 8) | header[13];
-
-    // Read the header length
     uint32_t header_length;
-    fread(&header_length, 4, 1, file);
-
+    if (fread(&header_length, 4, 1, file) != 1) {
+        fclose(file);
+        return;
+    }
     header_length = swap_endianness(header_length);
-    ESP_LOGD(TAG, "header length:\n %lx", header_length);
 
+    uint8_t hd[6];
+    if (header_length < 6 || fread(hd, 1, 6, file) != 6) {
+        fclose(file);
+        return;
+    }
+    format = (uint16_t)((hd[0] << 8) | hd[1]);
+    tracks = (uint16_t)((hd[2] << 8) | hd[3]);
+    division = (uint16_t)((hd[4] << 8) | hd[5]);
+    if (header_length > 6) {
+        fseek(file, (long)(header_length - 6), SEEK_CUR);
+    }
 
-    // Skip the rest of the header data
-    fseek(file, header_length , SEEK_CUR);
+    if ((division & 0x8000) == 0 && division != 0) {
+        ticksPerQuarterNote = (double)division;
+    } else {
+        ticksPerQuarterNote = 480.0;
+    }
 
-    // // Read and validate the track chunk
-    fread(header, 1, 4, file);
-
-    if (header[0] != 'M' || header[1] != 'T' || header[2] != 'r' || header[3] != 'k') {
-        ESP_LOGD(TAG,"Invalid MIDI file format: track header\n");
+    if (fread(sig, 1, 4, file) != 4 || sig[0] != 'M' || sig[1] != 'T' || sig[2] != 'r' || sig[3] != 'k') {
+        ESP_LOGW(TAG, "Invalid MIDI: missing MTrk");
         fclose(file);
         return;
     }
 
-    // Read the track length
     uint32_t track_length;
-    fread(&track_length, 4, 1, file);
+    if (fread(&track_length, 4, 1, file) != 1) {
+        fclose(file);
+        return;
+    }
     track_length = swap_endianness(track_length);
-    //ESP_LOGD(TAG, "track length:\n%lx", track_length);
 
+    long track_end = ftell(file) + (long)track_length;
 
-   
     event_time = 0;
     eventsCount = 0;
-    microsecondsPerQuarterNote = 1000000*60/bpm;  // Microseconds per quarter note (tempo)
+    microsecondsPerQuarterNote = 1000000 * 60 / bpm;
 
-
-    // Read MIDI events
-   while (ftell(file) < (header_length + 14 + track_length) ) {
-        // Read delta time
+    while (ftell(file) < track_end) {
         uint32_t delta_time = read_variable_length(file);
-        uint32_t temp = convertDeltaTimeToTime( (double) delta_time,  ticksPerQuarterNote,  microsecondsPerQuarterNote)  ; //delta time is in ticks, so it should be convert to miliseconds
-        // Read MIDI event type
+        uint32_t temp = convertDeltaTimeToTime((double)delta_time, ticksPerQuarterNote, microsecondsPerQuarterNote);
         uint8_t status_byte;
-        fread(&status_byte, 1, 1, file);
+        if (fread(&status_byte, 1, 1, file) != 1) {
+            break;
+        }
 
-        // Determine the type of MIDI event
+        if (status_byte == 0xFF) {
+            uint8_t metaType;
+            if (fread(&metaType, 1, 1, file) != 1) {
+                break;
+            }
+            uint32_t meta_len = readVLQ(file);
+            if (metaType == 0x51 && meta_len == 3) {
+                uint32_t tempo = 0;
+                for (uint32_t i = 0; i < meta_len; i++) {
+                    uint8_t byte;
+                    if (fread(&byte, 1, 1, file) != 1) {
+                        goto parse_done;
+                    }
+                    tempo = (tempo << 8) | byte;
+                }
+                microsecondsPerQuarterNote = (double)tempo;
+                ESP_LOGD(TAG, "Tempo meta: %lu us/qn", (unsigned long)tempo);
+            } else {
+                for (uint32_t i = 0; i < meta_len; i++) {
+                    uint8_t ign;
+                    if (fread(&ign, 1, 1, file) != 1) {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+
         uint8_t event_type = status_byte & 0xF0;
 
         switch (event_type) {
             case 0x80:
             case 0x90:
             case 0xE0:
-                event_time += temp;  //event time is the actual time of event in ms
+                event_time += temp;
 
-                // Process channel voice messages (Note On, Note Off, etc.)
-                
-                uint8_t channel = status_byte & 0x0F;
-
-                // Read MIDI parameters based on the event type
                 uint8_t param1, param2;
-                fread(&param1, 1, 1, file);
-                fread(&param2, 1, 1, file);
-
-                //ESP_LOGD(TAG,"Time: %lu, Event: %X, Channel: %u, Param1: %u, Param2: %u\n",
-                //       current_time, event_type, channel, param1, param2);
-                MidiEvent event;
-                event.status = event_type;
-                event.note = param1;
-                event.velocity = param2;
-                event.time = event_time;
-
-                eventsCount++;
-                events = realloc(events, sizeof(MidiEvent) * eventsCount);
-                events[eventsCount - 1] = event;
-
-                break;
-            case 0xFF:
-                uint8_t metaType;
-                fread(&metaType, 1, 1, file);
-
-                // Check for set tempo meta-event
-                if (metaType == 0x51) {
-                    // Read the length of the meta-event (should be 3 bytes)
-                    uint32_t metaEventLength = readVLQ(file);
-
-                    // Read the tempo value (microseconds per quarter note)
-                    uint32_t tempo = 0;
-                    for (int i = 0; i < 3; i++) {
-                        uint8_t byte;
-                        fread(&byte, 1, 1, file);
-                        tempo = (tempo << 8) | byte;
-                    }
-                    printf("Tempo: %lu microseconds per quarter note\n", tempo);
+                if (fread(&param1, 1, 1, file) != 1 || fread(&param2, 1, 1, file) != 1) {
+                    goto parse_done;
                 }
 
-                
+                {
+                    MidiEvent event;
+                    event.status = event_type;
+                    event.note = param1;
+                    event.velocity = param2;
+                    event.time = event_time;
+
+                    eventsCount++;
+                    events = realloc(events, sizeof(MidiEvent) * eventsCount);
+                    if (events == NULL) {
+                        eventsCount = 0;
+                        goto parse_done;
+                    }
+                    events[eventsCount - 1] = event;
+                }
                 break;
-
-
-            // Add cases for other MIDI event types as needed
 
             default:
-                // Unhandled MIDI event type
-               //printf("Unhandled MIDI event type: %X\n", event_type);
                 break;
         }
-
-       
     }
-    xTaskCreate(&midi_sequencer_task, "midi_sequencer_task", 4096, NULL, 5, NULL); 
+parse_done:
+    xTaskCreate(&midi_sequencer_task, "midi_sequencer_task", 4096, NULL, 5, NULL);
 
-    
     fclose(file);
 }
 

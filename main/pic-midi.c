@@ -1,6 +1,7 @@
 #include "main.h"
 #include "util.h"
 #include "pic-midi.h"
+#include "midi_recorder.h"
 #include "usbmidi.h"
 #include "esp_log.h"
 #if defined(__APPLE__) || defined(IDF_HOST_PARSING)
@@ -250,6 +251,13 @@ void  midiTx(uint8_t code, uint8_t status, uint8_t pitchLSB, uint8_t velocityMSB
     // USBTxHandle = USBTxOnePacket(MIDI_EP, (uint8_t*) & midi1, 4); // Send the
     // data
     // while (USBHandleBusy(USBTxHandle));
+
+#if !defined(uart_en)
+    /* Without UART mirror, notes only leave via USB (midiTx); with uart_en, inputToUART captures. */
+    if (midi_recorder_is_active() && (code == 0x8 || code == 0x9 || code == 0xE)) {
+        midi_recorder_capture(midi1.status, midi1.pitch, midi1.velocity);
+    }
+#endif
 }
 
 /**
