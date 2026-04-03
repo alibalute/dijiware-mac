@@ -228,6 +228,7 @@ uint8_t metronomeNumBeats = 1;
 uint8_t metronomeVol = 64; // mid volume
 uint8_t curVol = 127; // Current Volume
 uint8_t vibratoValue = 1;
+uint8_t sympatheticVelocityPercent = 50;
 uint8_t synthInstrument =
     107;                          // sitar 104 koto 107 viola 41 pan flute 75 steel guitar 25
 uint8_t velocityMultiplier = 1;  // Dynamic velocity sensitivity
@@ -287,6 +288,7 @@ uint8_t metronomeNumBeats = 1;
 uint8_t metronomeVol = 64; // mid volume
 uint8_t curVol = 127; // Current Volume
 uint8_t vibratoValue = 1;
+uint8_t sympatheticVelocityPercent = 50;
 uint8_t synthInstrument =
     107;                          // sitar 104 koto 107 viola 41 pan flute 75 steel guitar 25
 uint8_t velocityMultiplier = 1;  // Dynamic velocity sensitivity

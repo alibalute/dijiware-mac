@@ -311,7 +311,6 @@ uint8_t findVelocity(float avg, float pot_mid_value, uint8_t prev_velocity) {
 
 /* ---- Sympathetic string resonance: MIDI channel 16 (avoids same-key retrigger on main channel) ---- */
 #define CHANNEL_SYMPATHETIC MIDI_CHANNEL_16
-#define SYMPATHETIC_VELOCITY_PERCENT 50
 
 static uint8_t sympNoteCount[4] = {0, 0, 0, 0};
 static uint8_t sympMidi[4][4];
@@ -351,7 +350,8 @@ static uint8_t open_string_note24(uint8_t si)
 static void send_sympathetic_string_resonance(uint8_t strumStringIdx, uint8_t note12, uint8_t velocityValue,
                                               uint16_t pitchBend_mode)
 {
-    if (!resonateEnabled || !pluckedInstrument || percussionInstrument || chordEnabled) {
+    if (!resonateEnabled || !pluckedInstrument || percussionInstrument || chordEnabled
+        || sympatheticVelocityPercent == 0) {
         sympNoteCount[strumStringIdx] = 0;
         return;
     }
@@ -367,7 +367,7 @@ static void send_sympathetic_string_resonance(uint8_t strumStringIdx, uint8_t no
         if (note12 < openMidi || (note12 - openMidi) % 12 != 0) {
             continue;
         }
-        uint8_t sv = (uint8_t)((velocityValue * SYMPATHETIC_VELOCITY_PERCENT) / 100);
+        uint8_t sv = (uint8_t)(((uint32_t)velocityValue * sympatheticVelocityPercent) / 100);
         if (sv < 8) {
             sv = 8;
         }

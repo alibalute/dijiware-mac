@@ -75,6 +75,7 @@ cJSON *load_settings_from_flash(const char *filename) {
             cJSON_AddNumberToObject(defaults, "staccato", 0);
             cJSON_AddNumberToObject(defaults, "sustain", 1);
             cJSON_AddNumberToObject(defaults, "resonate", 0);
+            cJSON_AddNumberToObject(defaults, "sympatheticVolume", 50);
             cJSON_AddNumberToObject(defaults, "percussion", 0);
             cJSON_AddNumberToObject(defaults, "tapWithoutStrum", 0);
             cJSON_AddNumberToObject(defaults, "pitchSystem", 0);

@@ -284,6 +284,8 @@ extern bool effectsEnabled;
 extern bool tappingEnabled;
 extern bool sustainEnabled;
 extern bool resonateEnabled;
+/** Sympathetic string MIDI velocity as percent of main strum velocity (0–100). */
+extern uint8_t sympatheticVelocityPercent;
 extern bool quarterNotesEnabled;
 extern bool vibratoEnabled;
 extern bool chordEnabled;

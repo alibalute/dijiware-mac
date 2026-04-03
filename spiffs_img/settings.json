@@ -10,6 +10,7 @@
     "staccato": 0,
     "sustain": 1,
     "resonate": 0,
+    "sympatheticVolume": 50,
     "percussion": 0,
     "tapWithoutStrum": 0,
     "pitchSystem": 0,

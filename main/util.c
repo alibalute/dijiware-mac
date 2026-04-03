@@ -302,6 +302,20 @@ static void apply_loaded_settings(cJSON *loaded_settings) {
     { int v = get_numerical_setting(loaded_settings, "staccato"); handleMessage(0x09, v ? 1 : 0); }
     { int v = get_numerical_setting(loaded_settings, "sustain"); handleMessage(0x01, v ? 1 : 0); }
     { int v = get_numerical_setting(loaded_settings, "resonate"); handleMessage(0x1A, v ? 1 : 0); }
+    {
+        cJSON *svj = cJSON_GetObjectItemCaseSensitive(loaded_settings, "sympatheticVolume");
+        int sv = 50;
+        if (svj != NULL && cJSON_IsNumber(svj)) {
+            sv = (int)svj->valuedouble;
+            if (sv < 0) {
+                sv = 0;
+            }
+            if (sv > 100) {
+                sv = 100;
+            }
+        }
+        handleMessage(0x56, (uint8_t)sv);
+    }
     { int v = get_numerical_setting(loaded_settings, "percussion"); handleMessage(0x32, v ? 1 : 0); }
     { int v = get_numerical_setting(loaded_settings, "tapWithoutStrum"); handleMessage(0x33, v ? 1 : 0); }
     { int v = get_numerical_setting(loaded_settings, "pitchSystem"); handleMessage(0x34, (uint8_t)v); }
@@ -337,6 +351,7 @@ static cJSON *build_runtime_settings_json(void)
     cJSON_AddNumberToObject(out, "staccato", (int)staccatoEnable);
     cJSON_AddNumberToObject(out, "sustain", (int)sustainEnabled);
     cJSON_AddNumberToObject(out, "resonate", (int)resonateEnabled);
+    cJSON_AddNumberToObject(out, "sympatheticVolume", (int)sympatheticVelocityPercent);
     cJSON_AddNumberToObject(out, "percussion", (int)percussionInstrument);
     cJSON_AddNumberToObject(out, "tapWithoutStrum", (int)tapWithoutStrumEnabled);
     cJSON_AddNumberToObject(out, "pitchSystem", pitchSystem);
@@ -637,6 +652,13 @@ void handleMessage(int8_t code, int8_t data){
         } else if (data == 0x01){
             resonateEnabled = true;
         }
+    } else if (code == 0x56) {
+        /* Sympathetic velocity as percent of main strum (0–100); DijiApp BLE / settings JSON */
+        uint8_t p = data;
+        if (p > 100) {
+            p = 100;
+        }
+        sympatheticVelocityPercent = p;
     }else if (code == 0x1B) { 			//effects toggle
         if (data == 0x00) {
             effectsEnabled = false;
@@ -1190,6 +1212,12 @@ void handleUsbMessage(uint8_t usbCode, uint8_t usbData){
         } else if (usbData == 0x01){
             resonateEnabled = true;
         }
+    } else if (usbCode == 0x8B) {
+        uint8_t p = usbData;
+        if (p > 100) {
+            p = 100;
+        }
+        sympatheticVelocityPercent = p;
     }else if (usbCode == 0x90) { //set auto calibration time out
         strumCalibTimeout = usbData;
     } else if (usbCode == 0x91) { //enables and disables vibrato
