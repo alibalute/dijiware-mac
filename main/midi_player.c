@@ -81,16 +81,255 @@ uint32_t swap_endianness(uint32_t value) {
            ((value << 24) & 0xFF000000);
 }
 
-int compare_events( void *a,  void *b) {
-    return ((MidiEvent *)a)->time - ((MidiEvent *)b)->time;
+int compare_events(const void *a, const void *b) {
+    const MidiEvent *ea = (const MidiEvent *)a;
+    const MidiEvent *eb = (const MidiEvent *)b;
+    if (ea->time < eb->time) {
+        return -1;
+    }
+    if (ea->time > eb->time) {
+        return 1;
+    }
+    if (ea->channel < eb->channel) {
+        return -1;
+    }
+    if (ea->channel > eb->channel) {
+        return 1;
+    }
+    if (ea->note < eb->note) {
+        return -1;
+    }
+    if (ea->note > eb->note) {
+        return 1;
+    }
+    return (int)ea->status - (int)eb->status;
+}
+
+/** Per-track voice event before tick→ms merge (multi-track SMF). */
+typedef struct {
+    uint32_t tick;
+    uint32_t seq;
+    uint8_t status; /* full status byte (e.g. 0x90 | ch) */
+    uint8_t d1;
+    uint8_t d2;
+} MidiRawEvent;
+
+typedef struct {
+    uint32_t tick;
+    uint32_t seq;
+    uint32_t us_per_qn;
+} MidiTempoPoint;
+
+static int cmp_raw_event(const void *a, const void *b)
+{
+    const MidiRawEvent *x = (const MidiRawEvent *)a;
+    const MidiRawEvent *y = (const MidiRawEvent *)b;
+    if (x->tick != y->tick) {
+        return (x->tick < y->tick) ? -1 : 1;
+    }
+    if (x->seq != y->seq) {
+        return (x->seq < y->seq) ? -1 : 1;
+    }
+    return 0;
+}
+
+static int cmp_tempo_point(const void *a, const void *b)
+{
+    const MidiTempoPoint *x = (const MidiTempoPoint *)a;
+    const MidiTempoPoint *y = (const MidiTempoPoint *)b;
+    if (x->tick != y->tick) {
+        return (x->tick < y->tick) ? -1 : 1;
+    }
+    if (x->seq != y->seq) {
+        return (x->seq < y->seq) ? -1 : 1;
+    }
+    return 0;
+}
+
+/** Wall-clock ms at absolute tick `target`, given sorted tempo map (us per quarter). */
+static uint32_t ms_at_tick(uint32_t target, const MidiTempoPoint *tp, size_t tp_n,
+                           double tpqn, uint32_t us0)
+{
+    if (target == 0) {
+        return 0;
+    }
+    double ms = 0;
+    uint32_t pos = 0;
+    uint32_t us = us0;
+    size_t ti = 0;
+
+    while (pos < target) {
+        while (ti < tp_n && tp[ti].tick == pos) {
+            us = tp[ti].us_per_qn;
+            ti++;
+        }
+        uint32_t next = target;
+        if (ti < tp_n && tp[ti].tick < next) {
+            next = tp[ti].tick;
+        }
+        double dt = (double)(next - pos);
+        ms += (dt / tpqn) * ((double)us / 1000.0);
+        pos = next;
+    }
+    return (uint32_t)(ms + 0.5);
+}
+
+/**
+ * Parse one MTrk chunk: append tempo and note/pitch events using absolute tick time
+ * (all tracks share the same tick timeline in Format 1).
+ */
+static int parse_midi_track(
+    FILE *file,
+    long track_end,
+    MidiRawEvent **raw_out,
+    size_t *raw_count,
+    size_t *raw_cap,
+    MidiTempoPoint **tp_out,
+    size_t *tp_count,
+    size_t *tp_cap,
+    uint32_t *global_seq)
+{
+    uint32_t abs_tick = 0;
+    uint8_t running_status = 0;
+    bool have_running_status = false;
+
+    while (ftell(file) < track_end) {
+        uint32_t delta_time = read_variable_length(file);
+        abs_tick += delta_time;
+
+        uint8_t first_byte;
+        if (fread(&first_byte, 1, 1, file) != 1) {
+            break;
+        }
+
+        if (first_byte == 0xFF) {
+            have_running_status = false;
+            uint8_t metaType;
+            if (fread(&metaType, 1, 1, file) != 1) {
+                return -1;
+            }
+            uint32_t meta_len = readVLQ(file);
+
+            if (metaType == 0x51 && meta_len == 3) {
+                uint32_t tempo = 0;
+                for (uint32_t i = 0; i < meta_len; i++) {
+                    uint8_t byte;
+                    if (fread(&byte, 1, 1, file) != 1) {
+                        return -1;
+                    }
+                    tempo = (tempo << 8) | byte;
+                }
+                if (*tp_count >= *tp_cap) {
+                    size_t ncap = *tp_cap ? (*tp_cap * 2) : 16;
+                    MidiTempoPoint *n = realloc(*tp_out, ncap * sizeof(MidiTempoPoint));
+                    if (n == NULL) {
+                        return -1;
+                    }
+                    *tp_out = n;
+                    *tp_cap = ncap;
+                }
+                (*tp_out)[*tp_count].tick = abs_tick;
+                (*tp_out)[*tp_count].seq = (*global_seq)++;
+                (*tp_out)[*tp_count].us_per_qn = tempo;
+                (*tp_count)++;
+                ESP_LOGD(TAG, "Tempo @tick %lu: %lu us/qn", (unsigned long)abs_tick, (unsigned long)tempo);
+            } else {
+                for (uint32_t i = 0; i < meta_len; i++) {
+                    uint8_t ign;
+                    if (fread(&ign, 1, 1, file) != 1) {
+                        return -1;
+                    }
+                }
+            }
+            continue;
+        }
+
+        /* SysEx / escape (clears running status in SMF streams). */
+        if (first_byte == 0xF0 || first_byte == 0xF7) {
+            have_running_status = false;
+            uint32_t syxlen = readVLQ(file);
+            for (uint32_t i = 0; i < syxlen; i++) {
+                uint8_t ign;
+                if (fread(&ign, 1, 1, file) != 1) {
+                    return -1;
+                }
+            }
+            continue;
+        }
+
+        uint8_t status_byte;
+        uint8_t param1 = 0;
+        uint8_t param2 = 0;
+        bool using_running_status = (first_byte & 0x80) == 0;
+
+        if (!using_running_status) {
+            status_byte = first_byte;
+            running_status = status_byte;
+            have_running_status = true;
+        } else {
+            if (!have_running_status || (running_status & 0x80) == 0) {
+                return -1;
+            }
+            status_byte = running_status;
+            param1 = first_byte;
+        }
+
+        if (status_byte < 0x80 || status_byte > 0xEF) {
+            return -1;
+        }
+
+        uint8_t event_type = status_byte & 0xF0;
+
+        if (event_type == 0xC0 || event_type == 0xD0) {
+            if (!using_running_status) {
+                if (fread(&param1, 1, 1, file) != 1) {
+                    return -1;
+                }
+            }
+            continue;
+        }
+
+        if (!using_running_status) {
+            if (fread(&param1, 1, 1, file) != 1) {
+                return -1;
+            }
+        }
+        if (fread(&param2, 1, 1, file) != 1) {
+            return -1;
+        }
+
+        if (event_type == 0x80 || event_type == 0x90 || event_type == 0xE0) {
+            if (*raw_count >= *raw_cap) {
+                size_t ncap = *raw_cap ? (*raw_cap * 2) : 32;
+                MidiRawEvent *n = realloc(*raw_out, ncap * sizeof(MidiRawEvent));
+                if (n == NULL) {
+                    return -1;
+                }
+                *raw_out = n;
+                *raw_cap = ncap;
+            }
+            MidiRawEvent *re = &(*raw_out)[*raw_count];
+            re->tick = abs_tick;
+            re->seq = (*global_seq)++;
+            re->status = status_byte;
+            re->d1 = param1;
+            re->d2 = param2;
+            (*raw_count)++;
+        }
+    }
+    return 0;
 }
 
 int midi_parse_current_file(void)
 {
+    MidiRawEvent *raw = NULL;
+    MidiTempoPoint *tempos = NULL;
+    FILE *file = NULL;
+
     midi_take();
     midi_events_free();
 
-    FILE *file = fopen(midiFile, "rb");
+    file = fopen(midiFile, "rb");
 
     if (file == NULL) {
         ESP_LOGW(TAG, "Failed to open MIDI file: %s", midiFile ? midiFile : "(null)");
@@ -127,137 +366,96 @@ int midi_parse_current_file(void)
         ticksPerQuarterNote = 480.0;
     }
 
-    if (fread(sig, 1, 4, file) != 4 || sig[0] != 'M' || sig[1] != 'T' || sig[2] != 'r' || sig[3] != 'k') {
-        ESP_LOGW(TAG, "Invalid MIDI: missing MTrk");
-        goto parse_fail;
-    }
+    size_t raw_count = 0;
+    size_t raw_cap = 0;
+    size_t tempo_count = 0;
+    size_t tempo_cap = 0;
+    uint32_t seq_counter = 0;
 
-    uint32_t track_length;
-    if (fread(&track_length, 4, 1, file) != 1) {
-        goto parse_fail;
-    }
-    track_length = swap_endianness(track_length);
-
-    long track_end = ftell(file) + (long)track_length;
-
-    event_time = 0;
-    eventsCount = 0;
-    microsecondsPerQuarterNote = 1000000 * 60 / bpm;
-
-    /* MIDI parsing: handle running status and consume bytes for channel events
-     * we don't store (e.g. controller changes), so the file pointer stays in sync.
-     */
-    uint8_t running_status = 0;
-    bool have_running_status = false;
-
-    while (ftell(file) < track_end) {
-        uint32_t delta_time = read_variable_length(file);
-        uint32_t temp = convertDeltaTimeToTime((double)delta_time, ticksPerQuarterNote, microsecondsPerQuarterNote);
-
-        uint8_t first_byte;
-        if (fread(&first_byte, 1, 1, file) != 1) {
-            break;
-        }
-
-        /* Meta events */
-        if (first_byte == 0xFF) {
-            uint8_t metaType;
-            if (fread(&metaType, 1, 1, file) != 1) break;
-            uint32_t meta_len = readVLQ(file);
-
-            if (metaType == 0x51 && meta_len == 3) {
-                uint32_t tempo = 0;
-                for (uint32_t i = 0; i < meta_len; i++) {
-                    uint8_t byte;
-                    if (fread(&byte, 1, 1, file) != 1) goto parse_fail;
-                    tempo = (tempo << 8) | byte;
-                }
-                microsecondsPerQuarterNote = (double)tempo;
-                ESP_LOGD(TAG, "Tempo meta: %lu us/qn", (unsigned long)tempo);
-            } else {
-                for (uint32_t i = 0; i < meta_len; i++) {
-                    uint8_t ign;
-                    if (fread(&ign, 1, 1, file) != 1) break;
-                }
-            }
-            continue;
-        }
-
-        /* Channel events with running status:
-         * - if first_byte has MSB=1 => it's a status byte
-         * - else => it's the first data byte, and we reuse running_status
-         */
-        uint8_t status_byte;
-        uint8_t param1 = 0;
-        uint8_t param2 = 0;
-        bool using_running_status = (first_byte & 0x80) == 0;
-
-        if (!using_running_status) {
-            status_byte = first_byte;
-            running_status = status_byte;
-            have_running_status = true;
-        } else {
-            if (!have_running_status || (running_status & 0x80) == 0) {
-                goto parse_fail;
-            }
-            status_byte = running_status;
-            param1 = first_byte; /* first data byte already read */
-        }
-
-        /* Only handle channel voice messages (0x80..0xEF). */
-        if (status_byte < 0x80 || status_byte > 0xEF) {
-            /* Unsupported status: best-effort skip.
-             * We don't know payload length for all system messages;
-             * keep parser simple and fail rather than desync silently.
-             */
+    for (uint16_t tr = 0; tr < tracks; tr++) {
+        if (fread(sig, 1, 4, file) != 4 || sig[0] != 'M' || sig[1] != 'T' || sig[2] != 'r' || sig[3] != 'k') {
+            ESP_LOGW(TAG, "Invalid MIDI: missing MTrk (track %u)", (unsigned)tr);
             goto parse_fail;
         }
 
-        uint8_t event_type = status_byte & 0xF0;
-        event_time += temp;
-
-        /* Decide how many data bytes to consume based on event_type. */
-        if (event_type == 0xC0 || event_type == 0xD0) {
-            /* 1 data byte (param1). */
-            if (!using_running_status) {
-                if (fread(&param1, 1, 1, file) != 1) goto parse_fail;
-            }
-
-            /* We don't currently store these event types. */
-            continue;
+        uint32_t track_length;
+        if (fread(&track_length, 4, 1, file) != 1) {
+            goto parse_fail;
         }
+        track_length = swap_endianness(track_length);
 
-        /* 2 data bytes (param1 + param2). */
-        if (!using_running_status) {
-            if (fread(&param1, 1, 1, file) != 1) goto parse_fail;
+        long track_end = ftell(file) + (long)track_length;
+        if (parse_midi_track(file, track_end, &raw, &raw_count, &raw_cap,
+                              &tempos, &tempo_count, &tempo_cap, &seq_counter) != 0) {
+            ESP_LOGW(TAG, "MIDI parse error in track %u", (unsigned)tr);
+            goto parse_fail;
         }
-        if (fread(&param2, 1, 1, file) != 1) goto parse_fail;
-
-        if (event_type == 0x80 || event_type == 0x90 || event_type == 0xE0) {
-            MidiEvent event;
-            event.status = event_type;
-            event.note = param1;
-            event.velocity = param2;
-            event.time = event_time;
-
-            eventsCount++;
-            events = realloc(events, sizeof(MidiEvent) * eventsCount);
-            if (events == NULL) {
-                eventsCount = 0;
+        long pos = ftell(file);
+        if (pos != track_end) {
+            /* Some encoders leave padding; align to chunk end. */
+            if (pos < track_end) {
+                fseek(file, track_end, SEEK_SET);
+            } else {
+                ESP_LOGW(TAG, "MIDI track %u over-read", (unsigned)tr);
                 goto parse_fail;
             }
-            events[eventsCount - 1] = event;
         }
-        /* else: consumed bytes but ignore */
     }
 
     fclose(file);
+    file = NULL;
+
+    if (tempo_count > 0) {
+        qsort(tempos, tempo_count, sizeof(MidiTempoPoint), cmp_tempo_point);
+    }
+    if (raw_count > 0) {
+        qsort(raw, raw_count, sizeof(MidiRawEvent), cmp_raw_event);
+    }
+
+    uint32_t us0 = (uint32_t)(1000000 * 60 / bpm);
+    if (tempo_count > 0 && tempos[0].tick == 0) {
+        us0 = tempos[0].us_per_qn;
+    }
+    microsecondsPerQuarterNote = (double)us0;
+
+    events = calloc(raw_count, sizeof(MidiEvent));
+    if (raw_count > 0 && events == NULL) {
+        goto parse_fail_nomidi;
+    }
+    eventsCount = raw_count;
+
+    for (size_t i = 0; i < raw_count; i++) {
+        uint8_t hi = (uint8_t)(raw[i].status & 0xF0);
+        events[i].status = hi;
+        events[i].channel = (uint8_t)(raw[i].status & 0x0F);
+        events[i].note = raw[i].d1;
+        events[i].velocity = raw[i].d2;
+        events[i].time = ms_at_tick(raw[i].tick, tempos, tempo_count, ticksPerQuarterNote, us0);
+    }
+
+    free(raw);
+    free(tempos);
+    raw = NULL;
+    tempos = NULL;
+
+    /* Same absolute ms can occur for multiple notes; stable order by channel then note. */
+    if (eventsCount > 0 && events != NULL) {
+        qsort(events, eventsCount, sizeof(MidiEvent), compare_events);
+    }
+
     midi_give();
-    ESP_LOGI(TAG, "MIDI parsed %u events from %s", (unsigned)eventsCount, midiFile ? midiFile : "?");
+    ESP_LOGI(TAG, "MIDI parsed %u events, %u tracks, format %u from %s",
+             (unsigned)eventsCount, (unsigned)tracks, (unsigned)format,
+             midiFile ? midiFile : "?");
     return 0;
 
 parse_fail:
-    fclose(file);
+    if (file) {
+        fclose(file);
+    }
+parse_fail_nomidi:
+    free(raw);
+    free(tempos);
     midi_events_free();
     midi_give();
     return -1;

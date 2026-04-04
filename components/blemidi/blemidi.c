@@ -65,11 +65,11 @@ static const char *TAG = "BLEMIDI";
 #define ESP_APP_ID 0x55
 #define SVC_INST_ID 0
 
-/* The max length of characteristic value. When the GATT client performs a write
- * or prepare write operation, the data length must be less than
- * GATTS_MIDI_CHAR_VAL_LEN_MAX.
- */
-#define GATTS_MIDI_CHAR_VAL_LEN_MAX 100
+/* Max characteristic value length. Was 100: larger BLE-MIDI SysEx (e.g. SPIFFS
+ * upload) exceeded it, forcing queued writes; combined with ESP_GATT_AUTO_RSP
+ * that led to fragile prepare/exec handling in central apps. 512 fits one ATT
+ * payload after MTU exchange for typical upload chunks. */
+#define GATTS_MIDI_CHAR_VAL_LEN_MAX 512
 #define PREPARE_BUF_MAX_SIZE 2048
 #define CHAR_DECLARATION_SIZE (sizeof(uint8_t))
 
@@ -455,8 +455,8 @@ static int32_t blemidi_receive_packet(uint8_t blemidi_port, uint8_t *stream,
 
   if (blemidi_port >= BLEMIDI_NUM_PORTS) return -1;  // invalid port
 
-  ESP_LOGI(TAG, "receive_packet blemidi_port=%d, len=%d, stream:", blemidi_port,
-           len);
+  /* Hot path: avoid ESP_LOGI on every ATT write (SPIFFS MIDI upload = thousands of packets). */
+  ESP_LOGD(TAG, "receive_packet blemidi_port=%d, len=%d", blemidi_port, (int)len);
   ESP_LOG_BUFFER_HEX_LEVEL(TAG, stream, len, ESP_LOG_DEBUG);
 
   // detect continued SysEx
@@ -760,8 +760,17 @@ static void blemidi_exec_write_event_env(prepare_type_env_t *prepare_write_env,
                                          esp_ble_gatts_cb_param_t *param) {
   if (param->exec_write.exec_write_flag == ESP_GATT_PREP_WRITE_EXEC &&
       prepare_write_env->prepare_buf) {
-    esp_log_buffer_hex(TAG, prepare_write_env->prepare_buf,
-                       prepare_write_env->prepare_len);
+    /* Long writes: central splits payloads larger than the GATT value size (see
+     * GATTS_MIDI_CHAR_VAL_LEN_MAX). Without this, only ESP_GATTS_WRITE_EVT
+     * (short writes) reached blemidi_receive_packet — MIDI upload DATA was lost.
+     * ESP-IDF 5.x exec_write has no attribute handle; we only use prepare/exec
+     * for the MIDI characteristic in this service. */
+    blemidi_receive_packet(0, prepare_write_env->prepare_buf,
+                           (size_t)prepare_write_env->prepare_len,
+                           blemidi_callback_midi_message_received);
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, prepare_write_env->prepare_buf,
+                             (size_t)prepare_write_env->prepare_len,
+                             ESP_LOG_DEBUG);
   } else {
     ESP_LOGI(TAG, "ESP_GATT_PREP_WRITE_CANCEL");
   }
@@ -847,7 +856,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event,
       }
       break;
     case ESP_GATTS_EXEC_WRITE_EVT:
-      // the length of gattc prepare write data must be less than blemidi_mtu.
+      /* Response is handled by GATT stack when attributes use ESP_GATT_AUTO_RSP.
+       * Do not call esp_ble_gatts_send_response here — a second reply breaks
+       * Web Bluetooth / Flutter ("GATT operation failed for unknown reason"). */
       ESP_LOGI(TAG, "ESP_GATTS_EXEC_WRITE_EVT");
       blemidi_exec_write_event_env(&prepare_write_env, param);
       break;

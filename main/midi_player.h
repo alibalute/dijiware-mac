@@ -31,7 +31,7 @@ uint32_t read_variable_length(FILE *file);
 
 void send_midi_event( MidiEvent *event);
 void midi_sequencer_task(void *pvParameters) ;
-int compare_events( void *a,  void *b);
+int compare_events(const void *a, const void *b);
 uint32_t readVLQ(FILE *file);
 extern char * midiFile;
 extern bool midiPause;

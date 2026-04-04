@@ -1567,10 +1567,14 @@ float fAbsoluteDiff(float x, float y) {
  *   F0 7D 4D 49 03 [slot] F7  — write /spiffs/slot.mid if complete
  */
 #define DIJI_MIDI_UPLOAD_MAX (256 * 1024)
-#define DIJI_SYSEX_ACC_MAX 512
+/* One complete F0…F7 (e.g. settings JSON base64); must hold largest single SysEx body. */
+#define DIJI_SYSEX_ACC_MAX 2048
+/* Base64 decode scratch for one DATA chunk — avoid per-packet malloc (heap fragmentation on long uploads). */
+#define DIJI_MIDI_B64_DEC_MAX 768
 
 static uint8_t s_diji_sysex_acc[DIJI_SYSEX_ACC_MAX];
 static size_t s_diji_sysex_acc_len;
+static uint8_t s_midi_b64_dec[DIJI_MIDI_B64_DEC_MAX];
 
 static uint8_t *s_midi_upload_buf = NULL;
 static size_t s_midi_upload_expected;
@@ -1661,29 +1665,25 @@ static void process_diji_midi_upload_sysex(const uint8_t *data, size_t dlen) {
       return;
     }
     size_t dec_cap = (b64_len * 3) / 4 + 4;
-    uint8_t *tmp = (uint8_t *)malloc(dec_cap);
-    if (tmp == NULL) {
-      ESP_LOGE(TAG, "MIDI upload DATA: tmp malloc failed");
+    if (dec_cap > DIJI_MIDI_B64_DEC_MAX) {
+      ESP_LOGW(TAG, "MIDI upload DATA: b64 chunk too large (%u)", (unsigned)b64_len);
       diji_midi_upload_free_session();
       return;
     }
     size_t olen = 0;
-    int dr = mbedtls_base64_decode(tmp, dec_cap, &olen, b64_in, b64_len);
+    int dr = mbedtls_base64_decode(s_midi_b64_dec, sizeof(s_midi_b64_dec), &olen, b64_in, b64_len);
     if (dr != 0) {
       ESP_LOGW(TAG, "MIDI upload DATA: base64 decode failed %d", dr);
-      free(tmp);
       diji_midi_upload_free_session();
       return;
     }
     if (s_midi_upload_append_pos + olen > s_midi_upload_expected) {
       ESP_LOGW(TAG, "MIDI upload DATA: overflow append");
-      free(tmp);
       diji_midi_upload_free_session();
       return;
     }
-    memcpy(s_midi_upload_buf + s_midi_upload_append_pos, tmp, olen);
+    memcpy(s_midi_upload_buf + s_midi_upload_append_pos, s_midi_b64_dec, olen);
     s_midi_upload_append_pos += olen;
-    free(tmp);
     return;
   }
   if (cmd == 0x03) {
