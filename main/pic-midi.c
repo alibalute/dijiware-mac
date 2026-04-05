@@ -752,6 +752,11 @@ void noteOff(STRUM * strum, uint8_t c, uint8_t r) {
     if (s_noteoff_count % 300 == 0) {
         ESP_LOGI(TAG, "freeze ckpt noteOff n=%lu c=%u", (unsigned long)s_noteoff_count, (unsigned)c);
     }
+    /* Strum-step plays MIDI file notes; physical noteOff used string pitch — send file note-off on release. */
+    if (midi_strum_step_mode) {
+        midi_strum_step_on_strum_release();
+        return;
+    }
     uint8_t n;
     uint8_t channel = 0;
 

@@ -1028,6 +1028,7 @@ void handleMessage(int8_t code, int8_t data){
                 midi_recorder_stop_and_finalize();
             }
             midiStop = true;
+            midi_player_panic_all_channels();
         }
 
         else if(data == 2){//play
@@ -1050,6 +1051,7 @@ void handleMessage(int8_t code, int8_t data){
         }
         else if(data == 3){//pause
             midiPause = true;
+            midi_player_panic_all_channels();
         }
     }
 

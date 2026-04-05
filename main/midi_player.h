@@ -48,5 +48,9 @@ void midi_strum_step_set_enabled(bool enable);
 void midi_strum_step_reset_index(void);
 /** Advance to next note-on in parsed file and send it. Returns true if a note was sent. */
 bool midi_strum_step_try_note(void);
+/** Call from physical strum release (noteOff): sends MIDI note-off for the last strum-step note. */
+void midi_strum_step_on_strum_release(void);
+/** Sustain off + all sound off on every channel (UART + USB); use on transport stop/pause. */
+void midi_player_panic_all_channels(void);
 
 

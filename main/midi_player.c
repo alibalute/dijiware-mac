@@ -25,6 +25,8 @@
 #include "midi_player.h"
 #include "spiffs.h"
 
+extern void midiTx(uint8_t code, uint8_t status, uint8_t pitchLSB, uint8_t velocityMSB);
+
 static const char* TAG = "midi_player";
 
 /** Set on any parse_midi_track() failure; printed with "MIDI parse error in track N". */
@@ -49,9 +51,13 @@ size_t eventsCount = 0;
 
 bool midi_strum_step_mode = false;
 static size_t midi_step_event_index = 0;
+/** Last note-on sent in strum-step; cleared when mode turns off. */
+static bool s_strum_sounding_valid;
+static uint8_t s_strum_sounding_note;
 static SemaphoreHandle_t s_midi_events_mutex;
 
 static void midi_stream_state_free(void);
+static void strum_step_quiet_before_next(void);
 
 static void midi_take(void)
 {
@@ -1183,6 +1189,11 @@ static int midi_parse_internal(bool force_full_events)
 
     s_midi_stream_mode = false;
 
+    if (midi_strum_step_mode) {
+        strum_step_quiet_before_next();
+        s_strum_sounding_valid = false;
+    }
+
     midi_give();
     ESP_LOGI(TAG, "MIDI parsed %u events, %u tracks, format %u from %s",
              (unsigned)eventsCount, (unsigned)tracks, (unsigned)format,
@@ -1222,12 +1233,14 @@ void midi_strum_step_set_enabled(bool enable)
         }
         midi_take();
         midi_step_event_index = 0;
+        s_strum_sounding_valid = false;
         midi_strum_step_mode = true;
         midi_give();
         ESP_LOGI(TAG, "MIDI strum-step: %u events from %s", (unsigned)eventsCount, midiFile ? midiFile : "?");
     } else {
         midi_take();
         midi_strum_step_mode = false;
+        s_strum_sounding_valid = false;
         midi_give();
     }
 }
@@ -1236,6 +1249,46 @@ void midi_strum_step_reset_index(void)
 {
     midi_take();
     midi_step_event_index = 0;
+    midi_give();
+}
+
+/** Release sustain and previous strum note so pedal/file state cannot ring forever. */
+static void strum_step_quiet_before_next(void)
+{
+    MidiEvent sus;
+    sus.status = 0xB0;
+    sus.channel = 0;
+    sus.note = 0x40;
+    sus.velocity = 0;
+    sus.time = 0;
+    send_midi_event(&sus);
+    if (s_strum_sounding_valid) {
+        MidiEvent off;
+        off.status = 0x80;
+        off.channel = 0;
+        off.note = s_strum_sounding_note;
+        off.velocity = 0;
+        off.time = 0;
+        send_midi_event(&off);
+    }
+}
+
+void midi_strum_step_on_strum_release(void)
+{
+    if (!midi_strum_step_mode) {
+        return;
+    }
+    midi_take();
+    if (s_strum_sounding_valid) {
+        MidiEvent off;
+        off.status = 0x80;
+        off.channel = 0;
+        off.note = s_strum_sounding_note;
+        off.velocity = 0;
+        off.time = 0;
+        send_midi_event(&off);
+        s_strum_sounding_valid = false;
+    }
     midi_give();
 }
 
@@ -1253,8 +1306,11 @@ bool midi_strum_step_try_note(void)
 
     for (size_t i = midi_step_event_index; i < eventsCount; i++) {
         if (events[i].status == 0x90 && events[i].velocity > 0) {
+            strum_step_quiet_before_next();
             MidiEvent ev = events[i];
             midi_step_event_index = i + 1;
+            s_strum_sounding_valid = true;
+            s_strum_sounding_note = ev.note;
             midi_give();
             send_midi_event(&ev);
             return true;
@@ -1264,8 +1320,11 @@ bool midi_strum_step_try_note(void)
     midi_step_event_index = 0;
     for (size_t i = 0; i < eventsCount; i++) {
         if (events[i].status == 0x90 && events[i].velocity > 0) {
+            strum_step_quiet_before_next();
             MidiEvent ev = events[i];
             midi_step_event_index = i + 1;
+            s_strum_sounding_valid = true;
+            s_strum_sounding_note = ev.note;
             midi_give();
             send_midi_event(&ev);
             return true;
@@ -1358,6 +1417,17 @@ void send_midi_event(MidiEvent *event)
         inputToUART(st, event->note, event->velocity);
     } else {
         inputToUART(st, event->note + transposeValue, event->velocity);
+    }
+}
+
+void midi_player_panic_all_channels(void)
+{
+    for (uint8_t ch = 0; ch < 16; ch++) {
+        uint8_t st = (uint8_t)(0xB0 | ch);
+        inputToUART(st, 0x40, 0);
+        inputToUART(st, 0x78, 0);
+        midiTx(0xB, st, 0x40, 0);
+        midiTx(0xB, st, 0x78, 0);
     }
 }
 
