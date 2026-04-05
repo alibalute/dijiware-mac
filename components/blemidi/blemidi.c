@@ -48,6 +48,14 @@
 
 #define BLE_MIDI_LOG_LEVEL ESP_LOG_DEBUG
 
+/* Set to 1 only when debugging BLE framing; SPIFFS MIDI upload will wedge BTC_TASK if this logs every packet. */
+#ifndef BLEMIDI_LOG_EVERY_RX_PACKET
+#define BLEMIDI_LOG_EVERY_RX_PACKET 0
+#endif
+#ifndef BLEMIDI_LOG_EVERY_GATT_WRITE
+#define BLEMIDI_LOG_EVERY_GATT_WRITE 0
+#endif
+
 static const char *TAG = "BLEMIDI";
 
 #if BLEMIDI_ENABLE_CONSOLE
@@ -455,9 +463,12 @@ static int32_t blemidi_receive_packet(uint8_t blemidi_port, uint8_t *stream,
 
   if (blemidi_port >= BLEMIDI_NUM_PORTS) return -1;  // invalid port
 
-  /* Hot path: avoid ESP_LOGI on every ATT write (SPIFFS MIDI upload = thousands of packets). */
+  /* Hot path: no hex dump here — SPIFFS MIDI upload sends hundreds of packets; UART logging
+   * in BTC_TASK starves IDLE and triggers task_wdt (see esp_log_buffer_hex in backtrace). */
+#if BLEMIDI_LOG_EVERY_RX_PACKET
   ESP_LOGD(TAG, "receive_packet blemidi_port=%d, len=%d", blemidi_port, (int)len);
   ESP_LOG_BUFFER_HEX_LEVEL(TAG, stream, len, ESP_LOG_DEBUG);
+#endif /* BLEMIDI_LOG_EVERY_RX_PACKET */
 
   // detect continued SysEx
   uint8_t continued_sysex = 0;
@@ -833,18 +844,21 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event,
       ESP_LOGI(TAG, "ESP_GATTS_READ_EVT");
       break;
     case ESP_GATTS_WRITE_EVT:
+#if BLEMIDI_LOG_EVERY_GATT_WRITE
       ESP_LOGI(TAG, "ESP_GATTS_WRITE_EVT");
+#endif
       if (!param->write.is_prep) {
         if (midi_handle_table[IDX_CHAR_VAL_A] == param->write.handle) {
           // the data length of gattc write  must be less than blemidi_mtu.
-#if 1
-                  ESP_LOGI(TAG, "GATT_WRITE_EVT, handle = %d, value len = %d, value :", param->write.handle, param->write.len);
-                  esp_log_buffer_hex(TAG, param->write.value, param->write.len);
+#if BLEMIDI_LOG_EVERY_GATT_WRITE
+          ESP_LOGI(TAG, "GATT_WRITE_EVT, handle = %d, value len = %d, value :",
+                   param->write.handle, param->write.len);
+          esp_log_buffer_hex(TAG, param->write.value, param->write.len);
 #endif
           blemidi_receive_packet(0, param->write.value, param->write.len,
                                  blemidi_callback_midi_message_received);
         } else {
-#if 1
+#if BLEMIDI_LOG_EVERY_GATT_WRITE
           ESP_LOGI(TAG, "GATT_WRITE_EVT, handle = %d, value len = %d, value :",
                    param->write.handle, param->write.len);
           esp_log_buffer_hex(TAG, param->write.value, param->write.len);

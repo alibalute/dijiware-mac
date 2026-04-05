@@ -20,6 +20,10 @@ extern void send_ble_settings_snapshot(void);
 
 #define TAG "BLE"
 
+#ifndef BLE_MIDI_LOG_EVERY_CALLBACK
+#define BLE_MIDI_LOG_EVERY_CALLBACK 0
+#endif
+
 static gpio_num_t btLed = -1;
 
 extern void handleMidiMessage(uint8_t midi_status, uint8_t *remaining_message, size_t len, size_t continued_sysex_pos);
@@ -127,8 +131,11 @@ void task_ble_midi(void *pvParameters) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void callback_midi_message_received(uint8_t blemidi_port, uint16_t timestamp, uint8_t midi_status, uint8_t *remaining_message, size_t len, size_t continued_sysex_pos)
 {
+  /* Avoid ESP_LOGI + hex on every chunk: SPIFFS MIDI upload floods UART and wedges BTC_TASK (task_wdt on IDLE). */
+#if BLE_MIDI_LOG_EVERY_CALLBACK
   ESP_LOGI(TAG, "CALLBACK blemidi_port=%d, timestamp=%d, midi_status=0x%02x, len=%d, continued_sysex_pos=%d, remaining_message:", blemidi_port, timestamp, midi_status, len, continued_sysex_pos);
   ESP_LOG_BUFFER_HEX_LEVEL(TAG, remaining_message, len, ESP_LOG_DEBUG);
+#endif
 
   /* handleMidiMessage routes channel messages to UART/synth and, for status 0xfe only, calls handleMessage(code, data).
    * Do not interpret raw payload bytes here: SysEx (0xf0/0xf7) and other statuses must not be treated as (code,data)
