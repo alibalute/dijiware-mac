@@ -10,6 +10,7 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include "esp_log.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -17,10 +18,26 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_spiffs.h"
+#include "sdkconfig.h"
+#if CONFIG_SPIRAM
+#include "esp_heap_caps.h"
+#endif
 #include "midi_player.h"
 #include "spiffs.h"
 
 static const char* TAG = "midi_player";
+
+/** Set on any parse_midi_track() failure; printed with "MIDI parse error in track N". */
+static char s_midi_parse_err[128];
+
+static int parse_trk_fail(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(s_midi_parse_err, sizeof(s_midi_parse_err), fmt, ap);
+    va_end(ap);
+    return -1;
+}
 
 extern int bpm; // bpm is declared and initialized in metronome.c
 extern int16_t transposeValue; // value of transpose
@@ -32,6 +49,8 @@ size_t eventsCount = 0;
 bool midi_strum_step_mode = false;
 static size_t midi_step_event_index = 0;
 static SemaphoreHandle_t s_midi_events_mutex;
+
+static void midi_stream_state_free(void);
 
 static void midi_take(void)
 {
@@ -48,6 +67,7 @@ static void midi_give(void)
 
 static void midi_events_free(void)
 {
+    midi_stream_state_free();
     if (events != NULL) {
         free(events);
         events = NULL;
@@ -105,8 +125,8 @@ int compare_events(const void *a, const void *b) {
     return (int)ea->status - (int)eb->status;
 }
 
-/** Per-track voice event before tick→ms merge (multi-track SMF). */
-typedef struct {
+/** Per-track voice event before tick→ms merge (multi-track SMF). Packed to fit large scores on internal RAM. */
+typedef struct __attribute__((packed)) {
     uint32_t tick;
     uint32_t seq;
     uint8_t status; /* full status byte (e.g. 0x90 | ch) */
@@ -114,11 +134,80 @@ typedef struct {
     uint8_t d2;
 } MidiRawEvent;
 
+#if CONFIG_SPIRAM
+static bool s_midi_raw_spiram;
+#endif
+
+static void *midi_raw_realloc(void *ptr, size_t new_size)
+{
+#if CONFIG_SPIRAM
+    if (ptr == NULL) {
+        void *p = heap_caps_malloc(new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (p) {
+            s_midi_raw_spiram = true;
+            return p;
+        }
+        s_midi_raw_spiram = false;
+        return malloc(new_size);
+    }
+    if (s_midi_raw_spiram) {
+        void *p = heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (p) {
+            return p;
+        }
+        void *p2 = malloc(new_size);
+        if (!p2) {
+            return NULL;
+        }
+        size_t old_sz = heap_caps_get_allocated_size(ptr);
+        if (old_sz > new_size) {
+            old_sz = new_size;
+        }
+        memcpy(p2, ptr, old_sz);
+        heap_caps_free(ptr);
+        s_midi_raw_spiram = false;
+        return p2;
+    }
+#endif
+    return realloc(ptr, new_size);
+}
+
+static MidiEvent *midi_events_alloc(size_t n)
+{
+    if (n == 0) {
+        return NULL;
+    }
+#if CONFIG_SPIRAM
+    MidiEvent *p = heap_caps_calloc(n, sizeof(MidiEvent), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (p) {
+        return p;
+    }
+#endif
+    return calloc(n, sizeof(MidiEvent));
+}
+
 typedef struct {
     uint32_t tick;
     uint32_t seq;
     uint32_t us_per_qn;
 } MidiTempoPoint;
+
+static bool s_midi_stream_mode;
+static MidiTempoPoint *s_stream_tp;
+static size_t s_stream_tp_n;
+static uint32_t s_stream_us0;
+static long s_stream_track_start;
+static long s_stream_track_end;
+
+static void midi_stream_state_free(void)
+{
+    if (s_stream_tp != NULL) {
+        free(s_stream_tp);
+        s_stream_tp = NULL;
+    }
+    s_stream_tp_n = 0;
+    s_midi_stream_mode = false;
+}
 
 static int cmp_raw_event(const void *a, const void *b)
 {
@@ -189,24 +278,43 @@ static int parse_midi_track(
     size_t *tp_cap,
     uint32_t *global_seq)
 {
-    uint32_t abs_tick = 0;
-    uint8_t running_status = 0;
-    bool have_running_status = false;
+    long track_start = ftell(file);
+    uint32_t seq_at_track = *global_seq;
+    size_t base_count = *raw_count;
+    size_t voice_n = 0;
 
-    while (ftell(file) < track_end) {
+    /* Two passes: lyric/meta-heavy files over-estimate voice events from byte size
+     * (~8851 slots) and exhaust internal RAM. Pass 0 counts exact voice events;
+     * one realloc(base_count + count); pass 1 fills without duplicate tempo rows. */
+    for (int pass = 0; pass < 2; pass++) {
+        uint32_t abs_tick = 0;
+        uint8_t running_status = 0;
+        bool have_running_status = false;
+        size_t voice_in_track = 0;
+        size_t emit_idx = base_count;
+
+        if (pass > 0) {
+            if (fseek(file, track_start, SEEK_SET) != 0) {
+                return parse_trk_fail("fseek track");
+            }
+            *global_seq = seq_at_track;
+        }
+
+        while (ftell(file) < track_end) {
         uint32_t delta_time = read_variable_length(file);
         abs_tick += delta_time;
 
         uint8_t first_byte;
         if (fread(&first_byte, 1, 1, file) != 1) {
-            break;
+            return parse_trk_fail("EOF after delta (tick %lu, need more track data)",
+                                  (unsigned long)abs_tick);
         }
 
         if (first_byte == 0xFF) {
             have_running_status = false;
             uint8_t metaType;
             if (fread(&metaType, 1, 1, file) != 1) {
-                return -1;
+                return parse_trk_fail("EOF after meta FF (tick %lu)", (unsigned long)abs_tick);
             }
             uint32_t meta_len = readVLQ(file);
 
@@ -215,29 +323,35 @@ static int parse_midi_track(
                 for (uint32_t i = 0; i < meta_len; i++) {
                     uint8_t byte;
                     if (fread(&byte, 1, 1, file) != 1) {
-                        return -1;
+                        return parse_trk_fail("EOF in tempo meta (tick %lu)", (unsigned long)abs_tick);
                     }
                     tempo = (tempo << 8) | byte;
                 }
-                if (*tp_count >= *tp_cap) {
-                    size_t ncap = *tp_cap ? (*tp_cap * 2) : 16;
-                    MidiTempoPoint *n = realloc(*tp_out, ncap * sizeof(MidiTempoPoint));
-                    if (n == NULL) {
-                        return -1;
+                if (pass == 0) {
+                    if (*tp_count >= *tp_cap) {
+                        size_t ncap = *tp_cap ? (*tp_cap * 2) : 16;
+                        MidiTempoPoint *n = realloc(*tp_out, ncap * sizeof(MidiTempoPoint));
+                        if (n == NULL) {
+                            return parse_trk_fail("OOM tempo map");
+                        }
+                        *tp_out = n;
+                        *tp_cap = ncap;
                     }
-                    *tp_out = n;
-                    *tp_cap = ncap;
+                    (*tp_out)[*tp_count].tick = abs_tick;
+                    (*tp_out)[*tp_count].seq = (*global_seq)++;
+                    (*tp_out)[*tp_count].us_per_qn = tempo;
+                    (*tp_count)++;
+                    ESP_LOGD(TAG, "Tempo @tick %lu: %lu us/qn", (unsigned long)abs_tick, (unsigned long)tempo);
+                } else {
+                    (*global_seq)++;
                 }
-                (*tp_out)[*tp_count].tick = abs_tick;
-                (*tp_out)[*tp_count].seq = (*global_seq)++;
-                (*tp_out)[*tp_count].us_per_qn = tempo;
-                (*tp_count)++;
-                ESP_LOGD(TAG, "Tempo @tick %lu: %lu us/qn", (unsigned long)abs_tick, (unsigned long)tempo);
             } else {
                 for (uint32_t i = 0; i < meta_len; i++) {
                     uint8_t ign;
                     if (fread(&ign, 1, 1, file) != 1) {
-                        return -1;
+                        return parse_trk_fail("EOF in meta type 0x%02x len %lu (tick %lu)",
+                                              (unsigned)metaType, (unsigned long)meta_len,
+                                              (unsigned long)abs_tick);
                     }
                 }
             }
@@ -251,9 +365,46 @@ static int parse_midi_track(
             for (uint32_t i = 0; i < syxlen; i++) {
                 uint8_t ign;
                 if (fread(&ign, 1, 1, file) != 1) {
-                    return -1;
+                    return parse_trk_fail("EOF inside SysEx (declared len %lu, tick %lu)",
+                                          (unsigned long)syxlen, (unsigned long)abs_tick);
                 }
             }
+            continue;
+        }
+
+        /* SMF tracks should only have meta, SysEx, and channel messages. Some DAWs
+         * insert wire-format system common / real-time bytes (F1–FE); skip them or
+         * they hit status_byte>0xEF and fail with "parse error in track 0". */
+        if (first_byte == 0xF1) {
+            have_running_status = false;
+            uint8_t ign;
+            if (fread(&ign, 1, 1, file) != 1) {
+                return parse_trk_fail("EOF after F1 (tick %lu)", (unsigned long)abs_tick);
+            }
+            continue;
+        }
+        if (first_byte == 0xF2) {
+            have_running_status = false;
+            uint8_t b[2];
+            if (fread(b, 1, 2, file) != 2) {
+                return parse_trk_fail("EOF after F2 (tick %lu)", (unsigned long)abs_tick);
+            }
+            continue;
+        }
+        if (first_byte == 0xF3) {
+            have_running_status = false;
+            uint8_t ign;
+            if (fread(&ign, 1, 1, file) != 1) {
+                return parse_trk_fail("EOF after F3 (tick %lu)", (unsigned long)abs_tick);
+            }
+            continue;
+        }
+        if (first_byte == 0xF4 || first_byte == 0xF5 || first_byte == 0xF6) {
+            have_running_status = false;
+            continue;
+        }
+        if (first_byte >= 0xF8 && first_byte <= 0xFE) {
+            have_running_status = false;
             continue;
         }
 
@@ -268,14 +419,17 @@ static int parse_midi_track(
             have_running_status = true;
         } else {
             if (!have_running_status || (running_status & 0x80) == 0) {
-                return -1;
+                return parse_trk_fail("data 0x%02x without running status at tick %lu",
+                                      (unsigned)first_byte, (unsigned long)abs_tick);
             }
             status_byte = running_status;
             param1 = first_byte;
         }
 
         if (status_byte < 0x80 || status_byte > 0xEF) {
-            return -1;
+            return parse_trk_fail("bad status 0x%02x at tick %lu (running=%d)",
+                                  (unsigned)status_byte, (unsigned long)abs_tick,
+                                  using_running_status ? 1 : 0);
         }
 
         uint8_t event_type = status_byte & 0xF0;
@@ -283,7 +437,8 @@ static int parse_midi_track(
         if (event_type == 0xC0 || event_type == 0xD0) {
             if (!using_running_status) {
                 if (fread(&param1, 1, 1, file) != 1) {
-                    return -1;
+                    return parse_trk_fail("EOF after PC/pressure status 0x%02x tick %lu",
+                                          (unsigned)status_byte, (unsigned long)abs_tick);
                 }
             }
             continue;
@@ -291,36 +446,396 @@ static int parse_midi_track(
 
         if (!using_running_status) {
             if (fread(&param1, 1, 1, file) != 1) {
-                return -1;
+                return parse_trk_fail("EOF after status 0x%02x tick %lu",
+                                      (unsigned)status_byte, (unsigned long)abs_tick);
             }
         }
         if (fread(&param2, 1, 1, file) != 1) {
-            return -1;
+            return parse_trk_fail("EOF reading 2nd data byte (status 0x%02x tick %lu)",
+                                  (unsigned)status_byte, (unsigned long)abs_tick);
         }
 
         if (event_type == 0x80 || event_type == 0x90 || event_type == 0xE0) {
-            if (*raw_count >= *raw_cap) {
-                size_t ncap = *raw_cap ? (*raw_cap * 2) : 32;
-                MidiRawEvent *n = realloc(*raw_out, ncap * sizeof(MidiRawEvent));
+            if (pass == 0) {
+                voice_in_track++;
+                (*global_seq)++;
+            } else {
+                MidiRawEvent *re = &(*raw_out)[emit_idx++];
+                re->tick = abs_tick;
+                re->seq = (*global_seq)++;
+                re->status = status_byte;
+                re->d1 = param1;
+                re->d2 = param2;
+            }
+        }
+        } /* end while */
+
+        if (pass == 0) {
+            voice_n = voice_in_track;
+            if (voice_n > 0) {
+                size_t need = base_count + voice_n;
+                MidiRawEvent *n = midi_raw_realloc(*raw_out, need * sizeof(MidiRawEvent));
                 if (n == NULL) {
-                    return -1;
+                    return parse_trk_fail("OOM event list (%u note/pitch events)", (unsigned)voice_n);
                 }
                 *raw_out = n;
-                *raw_cap = ncap;
+                *raw_cap = need;
             }
-            MidiRawEvent *re = &(*raw_out)[*raw_count];
-            re->tick = abs_tick;
-            re->seq = (*global_seq)++;
-            re->status = status_byte;
-            re->d1 = param1;
-            re->d2 = param2;
-            (*raw_count)++;
         }
+    } /* end for pass */
+
+    *raw_count = base_count + voice_n;
+    return 0;
+}
+
+/**
+ * Single-pass scan of one MTrk: collect Set Tempo (0xFF 0x51) only. Keeps file in sync with parse_midi_track().
+ */
+static int collect_tempo_from_track(FILE *file, long track_end, MidiTempoPoint **tp_out, size_t *tp_count, size_t *tp_cap)
+{
+    uint32_t abs_tick = 0;
+    uint8_t running_status = 0;
+    bool have_running_status = false;
+    uint32_t tempo_seq = 0;
+
+    while (ftell(file) < track_end) {
+        uint32_t delta_time = read_variable_length(file);
+        abs_tick += delta_time;
+
+        uint8_t first_byte;
+        if (fread(&first_byte, 1, 1, file) != 1) {
+            return parse_trk_fail("EOF after delta (tick %lu, need more track data)",
+                                  (unsigned long)abs_tick);
+        }
+
+        if (first_byte == 0xFF) {
+            have_running_status = false;
+            uint8_t metaType;
+            if (fread(&metaType, 1, 1, file) != 1) {
+                return parse_trk_fail("EOF after meta FF (tick %lu)", (unsigned long)abs_tick);
+            }
+            uint32_t meta_len = readVLQ(file);
+
+            if (metaType == 0x51 && meta_len == 3) {
+                uint32_t tempo = 0;
+                for (uint32_t i = 0; i < meta_len; i++) {
+                    uint8_t byte;
+                    if (fread(&byte, 1, 1, file) != 1) {
+                        return parse_trk_fail("EOF in tempo meta (tick %lu)", (unsigned long)abs_tick);
+                    }
+                    tempo = (tempo << 8) | byte;
+                }
+                if (*tp_count >= *tp_cap) {
+                    size_t ncap = *tp_cap ? (*tp_cap * 2) : 16;
+                    MidiTempoPoint *n = realloc(*tp_out, ncap * sizeof(MidiTempoPoint));
+                    if (n == NULL) {
+                        return parse_trk_fail("OOM tempo map");
+                    }
+                    *tp_out = n;
+                    *tp_cap = ncap;
+                }
+                (*tp_out)[*tp_count].tick = abs_tick;
+                (*tp_out)[*tp_count].seq = tempo_seq++;
+                (*tp_out)[*tp_count].us_per_qn = tempo;
+                (*tp_count)++;
+                ESP_LOGD(TAG, "Tempo @tick %lu: %lu us/qn", (unsigned long)abs_tick, (unsigned long)tempo);
+            } else {
+                for (uint32_t i = 0; i < meta_len; i++) {
+                    uint8_t ign;
+                    if (fread(&ign, 1, 1, file) != 1) {
+                        return parse_trk_fail("EOF in meta type 0x%02x len %lu (tick %lu)",
+                                              (unsigned)metaType, (unsigned long)meta_len,
+                                              (unsigned long)abs_tick);
+                    }
+                }
+            }
+            continue;
+        }
+
+        if (first_byte == 0xF0 || first_byte == 0xF7) {
+            have_running_status = false;
+            uint32_t syxlen = readVLQ(file);
+            for (uint32_t i = 0; i < syxlen; i++) {
+                uint8_t ign;
+                if (fread(&ign, 1, 1, file) != 1) {
+                    return parse_trk_fail("EOF inside SysEx (declared len %lu, tick %lu)",
+                                          (unsigned long)syxlen, (unsigned long)abs_tick);
+                }
+            }
+            continue;
+        }
+
+        if (first_byte == 0xF1) {
+            have_running_status = false;
+            uint8_t ign;
+            if (fread(&ign, 1, 1, file) != 1) {
+                return parse_trk_fail("EOF after F1 (tick %lu)", (unsigned long)abs_tick);
+            }
+            continue;
+        }
+        if (first_byte == 0xF2) {
+            have_running_status = false;
+            uint8_t b[2];
+            if (fread(b, 1, 2, file) != 2) {
+                return parse_trk_fail("EOF after F2 (tick %lu)", (unsigned long)abs_tick);
+            }
+            continue;
+        }
+        if (first_byte == 0xF3) {
+            have_running_status = false;
+            uint8_t ign;
+            if (fread(&ign, 1, 1, file) != 1) {
+                return parse_trk_fail("EOF after F3 (tick %lu)", (unsigned long)abs_tick);
+            }
+            continue;
+        }
+        if (first_byte == 0xF4 || first_byte == 0xF5 || first_byte == 0xF6) {
+            have_running_status = false;
+            continue;
+        }
+        if (first_byte >= 0xF8 && first_byte <= 0xFE) {
+            have_running_status = false;
+            continue;
+        }
+
+        uint8_t status_byte;
+        uint8_t param1 = 0;
+        uint8_t param2 = 0;
+        bool using_running_status = (first_byte & 0x80) == 0;
+
+        if (!using_running_status) {
+            status_byte = first_byte;
+            running_status = status_byte;
+            have_running_status = true;
+        } else {
+            if (!have_running_status || (running_status & 0x80) == 0) {
+                return parse_trk_fail("data 0x%02x without running status at tick %lu",
+                                      (unsigned)first_byte, (unsigned long)abs_tick);
+            }
+            status_byte = running_status;
+            param1 = first_byte;
+        }
+
+        if (status_byte < 0x80 || status_byte > 0xEF) {
+            return parse_trk_fail("bad status 0x%02x at tick %lu (running=%d)",
+                                  (unsigned)status_byte, (unsigned long)abs_tick,
+                                  using_running_status ? 1 : 0);
+        }
+
+        uint8_t event_type = status_byte & 0xF0;
+
+        if (event_type == 0xC0 || event_type == 0xD0) {
+            if (!using_running_status) {
+                if (fread(&param1, 1, 1, file) != 1) {
+                    return parse_trk_fail("EOF after PC/pressure status 0x%02x tick %lu",
+                                          (unsigned)status_byte, (unsigned long)abs_tick);
+                }
+            }
+            continue;
+        }
+
+        if (!using_running_status) {
+            if (fread(&param1, 1, 1, file) != 1) {
+                return parse_trk_fail("EOF after status 0x%02x tick %lu",
+                                      (unsigned)status_byte, (unsigned long)abs_tick);
+            }
+        }
+        if (fread(&param2, 1, 1, file) != 1) {
+            return parse_trk_fail("EOF reading 2nd data byte (status 0x%02x tick %lu)",
+                                  (unsigned)status_byte, (unsigned long)abs_tick);
+        }
+
+        (void)event_type;
     }
     return 0;
 }
 
-int midi_parse_current_file(void)
+/**
+ * Stream one MTrk from current file position: send note-on/off/pitchbend with timing from tempo map.
+ */
+static void stream_track_play(FILE *file, long track_end, const MidiTempoPoint *tp, size_t tp_n,
+                              double tpqn, uint32_t us0)
+{
+    uint32_t abs_tick = 0;
+    uint8_t running_status = 0;
+    bool have_running_status = false;
+    uint32_t current_time;
+    uint32_t start_time = esp_log_timestamp();
+
+    while (ftell(file) < track_end) {
+        uint32_t delta_time = read_variable_length(file);
+        abs_tick += delta_time;
+
+        uint8_t first_byte;
+        if (fread(&first_byte, 1, 1, file) != 1) {
+            break;
+        }
+
+        if (first_byte == 0xFF) {
+            have_running_status = false;
+            uint8_t metaType;
+            if (fread(&metaType, 1, 1, file) != 1) {
+                break;
+            }
+            uint32_t meta_len = readVLQ(file);
+            for (uint32_t i = 0; i < meta_len; i++) {
+                uint8_t ign;
+                if (fread(&ign, 1, 1, file) != 1) {
+                    return;
+                }
+            }
+            continue;
+        }
+
+        if (first_byte == 0xF0 || first_byte == 0xF7) {
+            have_running_status = false;
+            uint32_t syxlen = readVLQ(file);
+            for (uint32_t i = 0; i < syxlen; i++) {
+                uint8_t ign;
+                if (fread(&ign, 1, 1, file) != 1) {
+                    return;
+                }
+            }
+            continue;
+        }
+
+        if (first_byte == 0xF1) {
+            have_running_status = false;
+            uint8_t ign;
+            if (fread(&ign, 1, 1, file) != 1) {
+                return;
+            }
+            continue;
+        }
+        if (first_byte == 0xF2) {
+            have_running_status = false;
+            uint8_t b[2];
+            if (fread(b, 1, 2, file) != 2) {
+                return;
+            }
+            continue;
+        }
+        if (first_byte == 0xF3) {
+            have_running_status = false;
+            uint8_t ign;
+            if (fread(&ign, 1, 1, file) != 1) {
+                return;
+            }
+            continue;
+        }
+        if (first_byte == 0xF4 || first_byte == 0xF5 || first_byte == 0xF6) {
+            have_running_status = false;
+            continue;
+        }
+        if (first_byte >= 0xF8 && first_byte <= 0xFE) {
+            have_running_status = false;
+            continue;
+        }
+
+        uint8_t status_byte;
+        uint8_t param1 = 0;
+        uint8_t param2 = 0;
+        bool using_running_status = (first_byte & 0x80) == 0;
+
+        if (!using_running_status) {
+            status_byte = first_byte;
+            running_status = status_byte;
+            have_running_status = true;
+        } else {
+            if (!have_running_status || (running_status & 0x80) == 0) {
+                break;
+            }
+            status_byte = running_status;
+            param1 = first_byte;
+        }
+
+        if (status_byte < 0x80 || status_byte > 0xEF) {
+            break;
+        }
+
+        uint8_t event_type = status_byte & 0xF0;
+
+        if (event_type == 0xC0 || event_type == 0xD0) {
+            if (!using_running_status) {
+                if (fread(&param1, 1, 1, file) != 1) {
+                    return;
+                }
+            }
+            continue;
+        }
+
+        if (!using_running_status) {
+            if (fread(&param1, 1, 1, file) != 1) {
+                return;
+            }
+        }
+        if (fread(&param2, 1, 1, file) != 1) {
+            return;
+        }
+
+        if (event_type == 0x80 || event_type == 0x90 || event_type == 0xE0) {
+            if (midiStop) {
+                return;
+            }
+            uint8_t hi = (uint8_t)(status_byte & 0xF0);
+            MidiEvent ev;
+            ev.status = hi;
+            ev.channel = (uint8_t)(status_byte & 0x0F);
+            ev.note = param1;
+            ev.velocity = param2;
+            ev.time = ms_at_tick(abs_tick, tp, tp_n, tpqn, us0);
+
+            do {
+                current_time = esp_log_timestamp();
+                vTaskDelay(1 / portTICK_PERIOD_MS);
+                while (midiPause && !midiStop) {
+                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    start_time = esp_log_timestamp();
+                }
+            } while (!midiStop && current_time < start_time + ev.time);
+
+            if (midiStop) {
+                return;
+            }
+            send_midi_event(&ev);
+        }
+    }
+}
+
+static void midi_stream_sequencer_task(void *pvParameters)
+{
+    (void)pvParameters;
+    const MidiTempoPoint *tp = s_stream_tp;
+    size_t tp_n = s_stream_tp_n;
+    uint32_t us0 = s_stream_us0;
+    long tstart = s_stream_track_start;
+    long tend = s_stream_track_end;
+    double tpqn = ticksPerQuarterNote;
+
+    if (midiFile == NULL) {
+        vTaskDelete(NULL);
+        return;
+    }
+
+    FILE *file = fopen(midiFile, "rb");
+    if (file == NULL) {
+        ESP_LOGW(TAG, "stream play: fopen failed %s", midiFile);
+        vTaskDelete(NULL);
+        return;
+    }
+    if (fseek(file, tstart, SEEK_SET) != 0) {
+        ESP_LOGW(TAG, "stream play: fseek failed");
+        fclose(file);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    stream_track_play(file, tend, tp, tp_n, tpqn, us0);
+    fclose(file);
+    vTaskDelete(NULL);
+}
+
+static int midi_parse_internal(bool force_full_events)
 {
     MidiRawEvent *raw = NULL;
     MidiTempoPoint *tempos = NULL;
@@ -328,6 +843,9 @@ int midi_parse_current_file(void)
 
     midi_take();
     midi_events_free();
+#if CONFIG_SPIRAM
+    s_midi_raw_spiram = false;
+#endif
 
     file = fopen(midiFile, "rb");
 
@@ -366,6 +884,93 @@ int midi_parse_current_file(void)
         ticksPerQuarterNote = 480.0;
     }
 
+    bool use_stream = !force_full_events && !midi_strum_step_mode && format == 0 && tracks == 1;
+
+    if (use_stream) {
+        size_t tempo_count = 0;
+        size_t tempo_cap = 0;
+        if (fread(sig, 1, 4, file) != 4 || sig[0] != 'M' || sig[1] != 'T' || sig[2] != 'r' || sig[3] != 'k') {
+            ESP_LOGW(TAG, "Invalid MIDI: missing MTrk (stream)");
+            goto parse_fail;
+        }
+        uint32_t track_length;
+        if (fread(&track_length, 4, 1, file) != 1) {
+            goto parse_fail;
+        }
+        track_length = swap_endianness(track_length);
+
+        long track_start = ftell(file);
+        long track_end = track_start + (long)track_length;
+        s_midi_parse_err[0] = '\0';
+        if (collect_tempo_from_track(file, track_end, &tempos, &tempo_count, &tempo_cap) != 0) {
+            ESP_LOGW(TAG, "MIDI tempo scan (stream): %s",
+                     s_midi_parse_err[0] != '\0' ? s_midi_parse_err : "unknown");
+            goto parse_fail;
+        }
+        fclose(file);
+        file = NULL;
+
+        if (tempo_count > 0) {
+            qsort(tempos, tempo_count, sizeof(MidiTempoPoint), cmp_tempo_point);
+        }
+        uint32_t us0 = (uint32_t)(1000000 * 60 / bpm);
+        if (tempo_count > 0 && tempos[0].tick == 0) {
+            us0 = tempos[0].us_per_qn;
+        }
+        microsecondsPerQuarterNote = (double)us0;
+
+        s_stream_tp = tempos;
+        tempos = NULL;
+        s_stream_tp_n = tempo_count;
+        s_stream_us0 = us0;
+        s_stream_track_start = track_start;
+        s_stream_track_end = track_end;
+        s_midi_stream_mode = true;
+
+        eventsCount = 0;
+        events = NULL;
+
+        midi_give();
+        ESP_LOGI(TAG, "MIDI stream mode: %u tempo points, fmt %u tracks %u from %s",
+                 (unsigned)tempo_count, (unsigned)format, (unsigned)tracks,
+                 midiFile ? midiFile : "?");
+        return 0;
+    }
+
+    fclose(file);
+    file = NULL;
+    file = fopen(midiFile, "rb");
+    if (file == NULL) {
+        ESP_LOGW(TAG, "Failed to reopen MIDI file: %s", midiFile ? midiFile : "(null)");
+        midi_give();
+        return -1;
+    }
+
+    if (fread(sig, 1, 4, file) != 4 || sig[0] != 'M' || sig[1] != 'T' || sig[2] != 'h' || sig[3] != 'd') {
+        ESP_LOGW(TAG, "Invalid MIDI: missing MThd");
+        goto parse_fail;
+    }
+    if (fread(&header_length, 4, 1, file) != 1) {
+        goto parse_fail;
+    }
+    header_length = swap_endianness(header_length);
+
+    if (header_length < 6 || fread(hd, 1, 6, file) != 6) {
+        goto parse_fail;
+    }
+    format = (uint16_t)((hd[0] << 8) | hd[1]);
+    tracks = (uint16_t)((hd[2] << 8) | hd[3]);
+    division = (uint16_t)((hd[4] << 8) | hd[5]);
+    if (header_length > 6) {
+        fseek(file, (long)(header_length - 6), SEEK_CUR);
+    }
+
+    if ((division & 0x8000) == 0 && division != 0) {
+        ticksPerQuarterNote = (double)division;
+    } else {
+        ticksPerQuarterNote = 480.0;
+    }
+
     size_t raw_count = 0;
     size_t raw_cap = 0;
     size_t tempo_count = 0;
@@ -385,9 +990,11 @@ int midi_parse_current_file(void)
         track_length = swap_endianness(track_length);
 
         long track_end = ftell(file) + (long)track_length;
+        s_midi_parse_err[0] = '\0';
         if (parse_midi_track(file, track_end, &raw, &raw_count, &raw_cap,
                               &tempos, &tempo_count, &tempo_cap, &seq_counter) != 0) {
-            ESP_LOGW(TAG, "MIDI parse error in track %u", (unsigned)tr);
+            ESP_LOGW(TAG, "MIDI parse error in track %u: %s", (unsigned)tr,
+                     s_midi_parse_err[0] != '\0' ? s_midi_parse_err : "unknown");
             goto parse_fail;
         }
         long pos = ftell(file);
@@ -418,7 +1025,7 @@ int midi_parse_current_file(void)
     }
     microsecondsPerQuarterNote = (double)us0;
 
-    events = calloc(raw_count, sizeof(MidiEvent));
+    events = midi_events_alloc(raw_count);
     if (raw_count > 0 && events == NULL) {
         goto parse_fail_nomidi;
     }
@@ -443,6 +1050,8 @@ int midi_parse_current_file(void)
         qsort(events, eventsCount, sizeof(MidiEvent), compare_events);
     }
 
+    s_midi_stream_mode = false;
+
     midi_give();
     ESP_LOGI(TAG, "MIDI parsed %u events, %u tracks, format %u from %s",
              (unsigned)eventsCount, (unsigned)tracks, (unsigned)format,
@@ -461,12 +1070,22 @@ parse_fail_nomidi:
     return -1;
 }
 
+int midi_parse_current_file(void)
+{
+    return midi_parse_internal(false);
+}
+
+int midi_parse_current_file_events(void)
+{
+    return midi_parse_internal(true);
+}
+
 void midi_strum_step_set_enabled(bool enable)
 {
     if (enable) {
         midiStop = true;
         vTaskDelay(pdMS_TO_TICKS(50));
-        if (midi_parse_current_file() != 0) {
+        if (midi_parse_current_file_events() != 0) {
             ESP_LOGW(TAG, "MIDI strum-step: parse failed, mode not enabled");
             return;
         }
@@ -535,16 +1154,27 @@ void play_midi_file(void)
     if (midi_parse_current_file() != 0) {
         return;
     }
-    xTaskCreate(&midi_sequencer_task, "midi_sequencer_task", 4096, NULL, 5, NULL);
+    if (s_midi_stream_mode) {
+        xTaskCreate(&midi_stream_sequencer_task, "midi_stream", 8192, NULL, 5, NULL);
+    } else {
+        xTaskCreate(&midi_sequencer_task, "midi_sequencer_task", 4096, NULL, 5, NULL);
+    }
 }
 
 // Function to read variable-length quantity (VLQ) from a file
 uint32_t readVLQ(FILE *file) {
     uint32_t value = 0;
-    uint8_t byte;
+    uint8_t byte = 0;
+    int n = 0;
 
     do {
-        fread(&byte, 1, 1, file);
+        if (fread(&byte, 1, 1, file) != 1) {
+            return value;
+        }
+        if (++n > 5) {
+            ESP_LOGW(TAG, "MIDI parse: VLQ too long (corrupt file?)");
+            return value;
+        }
         value = (value << 7) | (byte & 0x7F);
     } while (byte & 0x80);
 
@@ -553,10 +1183,17 @@ uint32_t readVLQ(FILE *file) {
 
 uint32_t read_variable_length(FILE *file) {
     uint32_t value = 0;
-    uint8_t byte;
+    uint8_t byte = 0;
+    int n = 0;
 
     do {
-        fread(&byte, 1, 1, file);
+        if (fread(&byte, 1, 1, file) != 1) {
+            return value;
+        }
+        if (++n > 5) {
+            ESP_LOGW(TAG, "MIDI parse: delta VLQ too long (corrupt file?)");
+            return value;
+        }
         value = (value << 7) | (byte & 0x7F);
     } while (byte & 0x80);
 

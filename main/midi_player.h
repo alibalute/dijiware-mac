@@ -24,8 +24,10 @@ typedef struct {
 } MidiEvent;
 
 void play_midi_file(void); //plays the midi file loaded into char * midiFile
-/** Load midiFile into events[] (used by play and strum-step mode). Returns 0 on success. */
+/** Load midiFile into events[] when possible; may use stream mode (fmt0/1 track) to save RAM. Returns 0 on success. */
 int midi_parse_current_file(void);
+/** Force full parse into events[] (strum-step, format 1, etc.). Returns 0 on success. */
+int midi_parse_current_file_events(void);
 
 uint32_t read_variable_length(FILE *file);
 

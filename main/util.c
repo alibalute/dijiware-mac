@@ -1058,14 +1058,15 @@ void handleMessage(int8_t code, int8_t data){
     {
         char fileName[50];  // Adjust the array size as needed
 
-        // Use sprintf to concatenate strings
         sprintf(fileName, "/spiffs/%d.mid", data); //data is the index of midi file in the spiffs e.g. /spiffs/1.mid
         setMidiFile(fileName);
-        /* Always reload events[] from disk so Play / strum-step use the selected file (not a stale parse). */
-        if (midi_parse_current_file() == 0) {
-            if (midi_strum_step_mode) {
+        /* Reload from disk so Play / strum-step use the selected file (not a stale parse). */
+        if (midi_strum_step_mode) {
+            if (midi_parse_current_file_events() == 0) {
                 midi_strum_step_reset_index();
             }
+        } else {
+            midi_parse_current_file();
         }
 
     }
@@ -1604,8 +1605,12 @@ static void diji_refresh_parsed_midi_if_path_matches(const char *path) {
   if (strcmp(midiFile, path) != 0) {
     return;
   }
-  if (midi_parse_current_file() == 0 && midi_strum_step_mode) {
-    midi_strum_step_reset_index();
+  if (midi_strum_step_mode) {
+    if (midi_parse_current_file_events() == 0) {
+      midi_strum_step_reset_index();
+    }
+  } else {
+    midi_parse_current_file();
   }
 }
 
