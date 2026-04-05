@@ -42,6 +42,7 @@ static int parse_trk_fail(const char *fmt, ...)
 extern int bpm; // bpm is declared and initialized in metronome.c
 extern int16_t transposeValue; // value of transpose
 extern uint8_t semitoneChannel;
+extern uint8_t quartertoneChannel;
 
 MidiEvent *events = NULL;
 size_t eventsCount = 0;
@@ -101,6 +102,25 @@ uint32_t swap_endianness(uint32_t value) {
            ((value << 24) & 0xFF000000);
 }
 
+/** Same tick/channel: program change, CC (e.g. sustain), pitch bend, note on, note off. */
+static int smf_event_sort_priority(uint8_t status_hi)
+{
+    switch (status_hi) {
+        case 0xC0:
+            return 0;
+        case 0xB0:
+            return 1;
+        case 0xE0:
+            return 2;
+        case 0x90:
+            return 3;
+        case 0x80:
+            return 4;
+        default:
+            return 5;
+    }
+}
+
 int compare_events(const void *a, const void *b) {
     const MidiEvent *ea = (const MidiEvent *)a;
     const MidiEvent *eb = (const MidiEvent *)b;
@@ -116,11 +136,19 @@ int compare_events(const void *a, const void *b) {
     if (ea->channel > eb->channel) {
         return 1;
     }
+    int pa = smf_event_sort_priority(ea->status);
+    int pb = smf_event_sort_priority(eb->status);
+    if (pa != pb) {
+        return (pa < pb) ? -1 : 1;
+    }
     if (ea->note < eb->note) {
         return -1;
     }
     if (ea->note > eb->note) {
         return 1;
+    }
+    if (ea->velocity != eb->velocity) {
+        return (ea->velocity < eb->velocity) ? -1 : 1;
     }
     return (int)ea->status - (int)eb->status;
 }
@@ -434,12 +462,33 @@ static int parse_midi_track(
 
         uint8_t event_type = status_byte & 0xF0;
 
-        if (event_type == 0xC0 || event_type == 0xD0) {
+        if (event_type == 0xD0) {
             if (!using_running_status) {
                 if (fread(&param1, 1, 1, file) != 1) {
-                    return parse_trk_fail("EOF after PC/pressure status 0x%02x tick %lu",
+                    return parse_trk_fail("EOF after pressure status 0x%02x tick %lu",
                                           (unsigned)status_byte, (unsigned long)abs_tick);
                 }
+            }
+            continue;
+        }
+
+        if (event_type == 0xC0) {
+            if (!using_running_status) {
+                if (fread(&param1, 1, 1, file) != 1) {
+                    return parse_trk_fail("EOF after program change 0x%02x tick %lu",
+                                          (unsigned)status_byte, (unsigned long)abs_tick);
+                }
+            }
+            if (pass == 0) {
+                voice_in_track++;
+                (*global_seq)++;
+            } else {
+                MidiRawEvent *re = &(*raw_out)[emit_idx++];
+                re->tick = abs_tick;
+                re->seq = (*global_seq)++;
+                re->status = status_byte;
+                re->d1 = param1;
+                re->d2 = 0;
             }
             continue;
         }
@@ -453,6 +502,24 @@ static int parse_midi_track(
         if (fread(&param2, 1, 1, file) != 1) {
             return parse_trk_fail("EOF reading 2nd data byte (status 0x%02x tick %lu)",
                                   (unsigned)status_byte, (unsigned long)abs_tick);
+        }
+
+        if (event_type == 0xB0) {
+            if (param1 == 0x40) {
+                /* Sustain pedal (damper); GM controller 64. */
+                if (pass == 0) {
+                    voice_in_track++;
+                    (*global_seq)++;
+                } else {
+                    MidiRawEvent *re = &(*raw_out)[emit_idx++];
+                    re->tick = abs_tick;
+                    re->seq = (*global_seq)++;
+                    re->status = status_byte;
+                    re->d1 = param1;
+                    re->d2 = param2;
+                }
+            }
+            continue;
         }
 
         if (event_type == 0x80 || event_type == 0x90 || event_type == 0xE0) {
@@ -476,7 +543,7 @@ static int parse_midi_track(
                 size_t need = base_count + voice_n;
                 MidiRawEvent *n = midi_raw_realloc(*raw_out, need * sizeof(MidiRawEvent));
                 if (n == NULL) {
-                    return parse_trk_fail("OOM event list (%u note/pitch events)", (unsigned)voice_n);
+                    return parse_trk_fail("OOM event list (%u timed events)", (unsigned)voice_n);
                 }
                 *raw_out = n;
                 *raw_cap = need;
@@ -651,7 +718,7 @@ static int collect_tempo_from_track(FILE *file, long track_end, MidiTempoPoint *
 }
 
 /**
- * Stream one MTrk from current file position: send note-on/off/pitchbend with timing from tempo map.
+ * Stream one MTrk from current file position: program change, sustain (CC 64), notes, pitch bend with tempo map.
  */
 static void stream_track_play(FILE *file, long track_end, const MidiTempoPoint *tp, size_t tp_n,
                               double tpqn, uint32_t us0)
@@ -755,12 +822,45 @@ static void stream_track_play(FILE *file, long track_end, const MidiTempoPoint *
 
         uint8_t event_type = status_byte & 0xF0;
 
-        if (event_type == 0xC0 || event_type == 0xD0) {
+        if (event_type == 0xD0) {
             if (!using_running_status) {
                 if (fread(&param1, 1, 1, file) != 1) {
                     return;
                 }
             }
+            continue;
+        }
+
+        if (event_type == 0xC0) {
+            if (!using_running_status) {
+                if (fread(&param1, 1, 1, file) != 1) {
+                    return;
+                }
+            }
+            if (midiStop) {
+                return;
+            }
+            uint8_t hi = (uint8_t)(status_byte & 0xF0);
+            MidiEvent ev;
+            ev.status = hi;
+            ev.channel = (uint8_t)(status_byte & 0x0F);
+            ev.note = param1;
+            ev.velocity = 0;
+            ev.time = ms_at_tick(abs_tick, tp, tp_n, tpqn, us0);
+
+            do {
+                current_time = esp_log_timestamp();
+                vTaskDelay(1 / portTICK_PERIOD_MS);
+                while (midiPause && !midiStop) {
+                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    start_time = esp_log_timestamp();
+                }
+            } while (!midiStop && current_time < start_time + ev.time);
+
+            if (midiStop) {
+                return;
+            }
+            send_midi_event(&ev);
             continue;
         }
 
@@ -771,6 +871,37 @@ static void stream_track_play(FILE *file, long track_end, const MidiTempoPoint *
         }
         if (fread(&param2, 1, 1, file) != 1) {
             return;
+        }
+
+        if (event_type == 0xB0 && param1 == 0x40) {
+            if (midiStop) {
+                return;
+            }
+            MidiEvent ev;
+            ev.status = 0xB0;
+            ev.channel = (uint8_t)(status_byte & 0x0F);
+            ev.note = param1;
+            ev.velocity = param2;
+            ev.time = ms_at_tick(abs_tick, tp, tp_n, tpqn, us0);
+
+            do {
+                current_time = esp_log_timestamp();
+                vTaskDelay(1 / portTICK_PERIOD_MS);
+                while (midiPause && !midiStop) {
+                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    start_time = esp_log_timestamp();
+                }
+            } while (!midiStop && current_time < start_time + ev.time);
+
+            if (midiStop) {
+                return;
+            }
+            send_midi_event(&ev);
+            continue;
+        }
+
+        if (event_type == 0xB0) {
+            continue;
         }
 
         if (event_type == 0x80 || event_type == 0x90 || event_type == 0xE0) {
@@ -1205,6 +1336,20 @@ void send_midi_event(MidiEvent *event)
 {
     uint8_t st = event->status;
     uint8_t hi = (uint8_t)(st & 0xF0);
+    if (hi == 0xC0) {
+        /* Program change: same convention as handleMessage 0x16 (util.c). */
+        uint8_t prog = event->note;
+        inputToUART((uint8_t)(0xC0 + semitoneChannel), 0x00, prog);
+        inputToUART((uint8_t)(0xC0 + quartertoneChannel), 0x00, prog);
+        return;
+    }
+    if (hi == 0xB0 && event->note == 0x40) {
+        /* Sustain pedal (CC 64); same as sustain handling in util.c. */
+        uint8_t val = event->velocity;
+        inputToUART((uint8_t)(0xB0 + semitoneChannel), 0x40, val);
+        inputToUART((uint8_t)(0xB0 + quartertoneChannel), 0x40, val);
+        return;
+    }
     if (hi == 0x80 || hi == 0x90 || hi == 0xE0) {
         st = (uint8_t)(hi | (semitoneChannel & 0x0F));
     }
