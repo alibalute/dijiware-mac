@@ -118,13 +118,13 @@ TAP tap[4] = {{false, false, REST, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false 
 // Strum Structure
 STRUM strum[4] = {
     {false, false, REST, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false},
+     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false, .hammerNoteOn = false},
     {false, false, REST, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false},
+     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false, .hammerNoteOn = false},
     {false, false, REST, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false},
+     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false, .hammerNoteOn = false},
     {false, false, REST, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false}};
+     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .strumNoteIsPlayed = false, .enoughTimePassedSinceLastStrum = false, .hammerNoteOn = false}};
 
 // Setting Variables
 #ifdef membrane
@@ -153,9 +153,11 @@ static bool lastNoteWasStrum = false;   // true only after a strum; cleared when
 #define TAP_WINDOW_TICKS 500  // ~200 ms at ~1 tick/ms
 
 // Hammer-on: fret change after strum/tap without new strum (lockout avoids double note)
-#define HAMMER_ON_LOCKOUT_TICKS 50   // ~50 ms no hammer-on after strum/tap
-#define HAMMER_ON_WINDOW_TICKS 400   // allow hammer-on within ~400 ms of last note
-#define HAMMER_ON_DEBOUNCE 2         // consecutive same new fret to trigger
+#define HAMMER_ON_LOCKOUT_TICKS 50   /* min ticks after tap/hammer before next hammer (duplicate guard) */
+/* Extra ticks after a physical strum note-on so fret ADC/string vibration does not false-trigger
+ * hammer (was mistaken for "sluggish strum" when HAMMER_ON_DEBOUNCE was 1 + short lockout). */
+#define HAMMER_ON_WINDOW_TICKS 600   // allow hammer-on within ~6000 ms of last note
+#define HAMMER_ON_DEBOUNCE 2         /* consecutive matching fret reads; use 2 — debounce 1 floods MIDI after strum */
 static uint32_t lastNoteOnTick[4] = {0};
 static uint32_t hammerOnLockoutUntilTick[4] = {0};
 static uint8_t lastFretAtNoteOn[4] = {0};
@@ -254,6 +256,7 @@ uint8_t strumReturnThreshold =
     140; // How far it must return before note-off; lower than start = hysteresis so note-off doesn't need perfect centering
 uint8_t tappingDebounceNum =
     1; // number of samples to take for tap debouncing (Hammer On Delay)
+uint8_t hammer_post_strum_guard_ticks = HAMMER_POST_STRUM_GUARD_TICKS_DEFAULT;
 
 uint8_t strumSensitivityFactor = 2; // by experimenting factor = 2 has a resaonabl sensisivity
 
@@ -314,6 +317,7 @@ uint8_t strumReturnThreshold =
     140; // How far it must return before note-off; lower than start = hysteresis so note-off doesn't need perfect centering
 uint8_t tappingDebounceNum =
     1; // number of samples to take for tap debouncing (Hammer On Delay)
+uint8_t hammer_post_strum_guard_ticks = HAMMER_POST_STRUM_GUARD_TICKS_DEFAULT;
 
 uint8_t strumSensitivityFactor = 2; // by experimenting factor = 2 has a resaonabl sensisivity
 
@@ -887,7 +891,8 @@ void ProcessIO(void)
               lastNotePlayedTick = noteTickCounter;
               lastNoteWasStrum = true;
               lastNoteOnTick[atString] = noteTickCounter;
-              hammerOnLockoutUntilTick[atString] = noteTickCounter + HAMMER_ON_LOCKOUT_TICKS;
+              hammerOnLockoutUntilTick[atString] = noteTickCounter + HAMMER_ON_LOCKOUT_TICKS
+                  + hammer_post_strum_guard_ticks;
               lastFretAtNoteOn[atString] = strum[atString].fret;
               lastPlayedNote[atString] = strum[atString].note;
               lastPlayedNoteIn24[atString] = strum[atString].noteIn24;
@@ -1017,7 +1022,8 @@ void ProcessIO(void)
                   lastNotePlayedTick = noteTickCounter;
                   lastNoteWasStrum = true;
                   lastNoteOnTick[atString] = noteTickCounter;
-                  hammerOnLockoutUntilTick[atString] = noteTickCounter + HAMMER_ON_LOCKOUT_TICKS;
+                  hammerOnLockoutUntilTick[atString] = noteTickCounter + HAMMER_ON_LOCKOUT_TICKS
+                      + hammer_post_strum_guard_ticks;
                   lastFretAtNoteOn[atString] = strum[atString].fret;
                   lastPlayedNote[atString] = strum[atString].note;
                   lastPlayedNoteIn24[atString] = strum[atString].noteIn24;
@@ -1037,7 +1043,8 @@ void ProcessIO(void)
                 lastNotePlayedTick = noteTickCounter;
                 lastNoteWasStrum = true;
                 lastNoteOnTick[atString] = noteTickCounter;
-                hammerOnLockoutUntilTick[atString] = noteTickCounter + HAMMER_ON_LOCKOUT_TICKS;
+                hammerOnLockoutUntilTick[atString] = noteTickCounter + HAMMER_ON_LOCKOUT_TICKS
+                    + hammer_post_strum_guard_ticks;
                 lastFretAtNoteOn[atString] = strum[atString].fret;
                 lastPlayedNote[atString] = strum[atString].note;
                 lastPlayedNoteIn24[atString] = strum[atString].noteIn24;
@@ -1047,6 +1054,11 @@ void ProcessIO(void)
             }
 
 
+            /* Clear hammer debounce so post-strum vibration does not continue a stale fret chain. */
+            if (hammerOnEnabled) {
+              hammerOnLastFret[atString] = 0;
+              hammerOnDebounceCount[atString] = 0;
+            }
             // Mark that were are now in a strum, note is already played and it is time to check for strum release in the next run and turning the note off
             strum[atString].inStrum = true;
             vTaskDelay(0);  /* yield after strum detect (heavy ADC) to avoid freeze in fast chord playing */
@@ -1152,16 +1164,19 @@ void ProcessIO(void)
         noteOff(&strum[atString], atString, 1);
         lastNoteOnTick[atString] = 0;
       }
-      // Hammer-on: fret change (no new strum) within window after last note; lockout avoids double note
-      // Run only every 2nd cycle to reduce ADC load (yields after read/block help avoid freezes).
-      else if (hammerOnEnabled && ((processIoCounter & 1) == 0)
+      // Hammer-on: fret change (no new strum) within window after last note; lockout avoids double note.
+      /* When tap/UI already read fret ADC this pass, run hammer every scan (2x debounce speed vs half-rate).
+       * Hammer-only (no tap) still uses every 2nd ProcessIO to limit extra readAndAverageString load. */
+      else if (hammerOnEnabled
+          && (((tappingEnabled || tapWithoutStrumEnabled || deviceState == UI_STATE))
+              || ((processIoCounter & 1) == 0))
           && (stringEnabledArray[atString] == true) && !strum[atString].inStrum
           && (lastNoteOnTick[atString] != 0)
           && ((uint32_t)(noteTickCounter - lastNoteOnTick[atString]) < HAMMER_ON_WINDOW_TICKS)
           && (noteTickCounter >= hammerOnLockoutUntilTick[atString]))
       {
         float hammerOnFretVal;
-        if ((tappingEnabled || tapWithoutStrumEnabled))
+        if ((tappingEnabled || tapWithoutStrumEnabled || deviceState == UI_STATE))
           hammerOnFretVal = currTapAverage;
         else {
           hammerOnFretVal = (float)readAndAverageString(atString);
@@ -1185,6 +1200,7 @@ void ProcessIO(void)
               strum[atString].adcFretAverage = hammerOnFretVal;
               getNote(&strum[atString], atString);
               vTaskDelay(0);  /* yield before noteOn to reduce freezes */
+              strum[atString].hammerNoteOn = true;
               noteOn(&strum[atString], atString, 1);
               lastNoteOnTick[atString] = noteTickCounter;
               hammerOnLockoutUntilTick[atString] = noteTickCounter + (HAMMER_ON_LOCKOUT_TICKS / 2);

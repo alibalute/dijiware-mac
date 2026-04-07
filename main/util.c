@@ -297,6 +297,63 @@ static void apply_loaded_settings(cJSON *loaded_settings) {
     tuningIndex = (uint8_t)get_numerical_setting(loaded_settings, "tuning");
     handleMessage(0x0E, tuningIndex);
     { int tap = get_numerical_setting(loaded_settings, "tapping"); handleMessage(0x06, tap ? 1 : 0); }
+    {
+        cJSON *hj = cJSON_GetObjectItemCaseSensitive(loaded_settings, "hammerOnVelocity");
+        int hv = 75;
+        if (hj != NULL && cJSON_IsNumber(hj)) {
+            hv = (int)hj->valuedouble;
+            if (hv < 0) {
+                hv = 0;
+            }
+            if (hv > 100) {
+                hv = 100;
+            }
+        }
+        handleMessage(0x0A, (int8_t)hv);
+    }
+    {
+        cJSON *gj = cJSON_GetObjectItemCaseSensitive(loaded_settings, "hammerPostStrumGuardTicks");
+        int gt = (int)HAMMER_POST_STRUM_GUARD_TICKS_DEFAULT;
+        if (gj != NULL && cJSON_IsNumber(gj)) {
+            gt = (int)gj->valuedouble;
+            if (gt < 0) {
+                gt = 0;
+            }
+            if (gt > 255) {
+                gt = 255;
+            }
+        }
+        handleMessage(0x0C, (int8_t)gt);
+    }
+    {
+        cJSON *mn = cJSON_GetObjectItemCaseSensitive(loaded_settings, "strumVelOutMin");
+        int mn_v = 10;
+        if (mn != NULL && cJSON_IsNumber(mn)) {
+            mn_v = (int)mn->valuedouble;
+            if (mn_v < 0) {
+                mn_v = 0;
+            }
+            if (mn_v > 127) {
+                mn_v = 127;
+            }
+        }
+        cJSON *mx = cJSON_GetObjectItemCaseSensitive(loaded_settings, "strumVelOutMax");
+        int mx_v = 127;
+        if (mx != NULL && cJSON_IsNumber(mx)) {
+            mx_v = (int)mx->valuedouble;
+            if (mx_v < 0) {
+                mx_v = 0;
+            }
+            if (mx_v > 127) {
+                mx_v = 127;
+            }
+        }
+        if (mn_v > mx_v) {
+            mx_v = mn_v;
+        }
+        handleMessage(0x5A, (uint8_t)mn_v);
+        handleMessage(0x5B, (uint8_t)mx_v);
+    }
     { int v = get_numerical_setting(loaded_settings, "transpose"); handleMessage(0x19, (int8_t)v); }
     { int v = get_numerical_setting(loaded_settings, "vibrato"); handleMessage(0x0D, (uint8_t)v); }
     { int v = get_numerical_setting(loaded_settings, "leftHand"); handleMessage(0x14, v ? 1 : 0); }
@@ -346,6 +403,8 @@ static cJSON *build_runtime_settings_json(void)
     cJSON_AddNumberToObject(out, "chords", (int)chordEnabled);
     cJSON_AddNumberToObject(out, "tuning", tuningIndex);
     cJSON_AddNumberToObject(out, "tapping", (int)hammerOnEnabled);
+    cJSON_AddNumberToObject(out, "hammerOnVelocity", (int)pic_midi_get_hammer_on_strum_vel_percent());
+    cJSON_AddNumberToObject(out, "hammerPostStrumGuardTicks", (int)hammer_post_strum_guard_ticks);
     cJSON_AddNumberToObject(out, "transpose", transposeValue);
     cJSON_AddNumberToObject(out, "vibrato", vibratoValue);
     cJSON_AddNumberToObject(out, "leftHand", (int)leftHandEnabled);
@@ -492,8 +551,19 @@ void handleMessage(int8_t code, int8_t data){
         else if(data==0){
             staccatoEnable=false;
         }
-    } else if (code == 0x0A) { 			//set tapping volume (midi velocity of tapping)
-        //tappingVolume = data;
+    } else if (code == 0x0A) { 			// hammer-on Note On velocity as % of last strum MIDI velocity (0–100)
+        {
+            int p = (int)(int8_t)data;
+            if (p < 0) {
+                p = 0;
+            }
+            if (p > 100) {
+                p = 100;
+            }
+            pic_midi_set_hammer_on_strum_vel_percent((uint8_t)p);
+        }
+    } else if (code == 0x0C) { 			// hammer post-strum guard ticks (0–255, etar hammer_post_strum_guard_ticks)
+        hammer_post_strum_guard_ticks = (uint8_t)(int8_t)data;
     } else if (code == 0x0B) { 			//set auto calibration time out
         strumCalibTimeout = data;
     } else if (code == 0x0D) { 			//set vibrato 
@@ -661,6 +731,12 @@ void handleMessage(int8_t code, int8_t data){
             p = 100;
         }
         sympatheticVelocityPercent = p;
+    } else if (code == 0x5A) {
+        /* Strum dynamics: min MIDI velocity (0–127); pic-midi.c findVelocity output floor */
+        pic_midi_set_strum_vel_out_min((uint8_t)data);
+    } else if (code == 0x5B) {
+        /* Strum dynamics: max MIDI velocity (0–127); pic-midi.c findVelocity output ceiling */
+        pic_midi_set_strum_vel_out_max((uint8_t)data);
     }else if (code == 0x1B) { 			//effects toggle
         if (data == 0x00) {
             effectsEnabled = false;

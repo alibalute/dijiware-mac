@@ -167,6 +167,7 @@ typedef struct _STRUM {
                           // instrum if true or not. needed when tapping is
                           // eanbled
   bool enoughTimePassedSinceLastStrum;
+  bool hammerNoteOn;      /* next noteOn uses hammer velocity (% of last strum MIDI vel) */
 
 } STRUM;
 
@@ -337,6 +338,11 @@ extern bool percussionInstrument;
 
 extern bool tapWithoutStrumEnabled;
 extern bool hammerOnEnabled;
+#ifndef HAMMER_POST_STRUM_GUARD_TICKS_DEFAULT
+#define HAMMER_POST_STRUM_GUARD_TICKS_DEFAULT 35
+#endif
+/** Extra noteTickCounter ticks after a strum before hammer-on can evaluate (BLE 0x0C, 0–255). */
+extern uint8_t hammer_post_strum_guard_ticks;
 
 // index the pitch adjustment array in midi.c. shows what microtnal system is
 // selected

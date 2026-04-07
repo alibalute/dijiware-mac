@@ -274,15 +274,71 @@ void  midiTx(uint8_t code, uint8_t status, uint8_t pitchLSB, uint8_t velocityMSB
  **/
 #define STRUM_VEL_IN_MIN  50.f   /* deflection below this → min velocity */
 #define STRUM_VEL_IN_MAX  300.f  /* deflection above this → max velocity */
-#define STRUM_VEL_OUT_MIN 10     /* minimum velocity (keeps notes audible) */
-#define STRUM_VEL_OUT_MAX 127
+#define STRUM_VEL_OUT_MIN_DEFAULT 10
+#define STRUM_VEL_OUT_MAX_DEFAULT 127
 #define STRUM_VEL_MAX_DELTA 28  /* max change per note (prevents erroneous spikes) */
+
+static uint8_t strum_vel_out_min = STRUM_VEL_OUT_MIN_DEFAULT;
+static uint8_t strum_vel_out_max = STRUM_VEL_OUT_MAX_DEFAULT;
+
+void pic_midi_set_strum_vel_out_min(uint8_t v)
+{
+    if (v > 127) {
+        v = 127;
+    }
+    strum_vel_out_min = v;
+    if (strum_vel_out_min > strum_vel_out_max) {
+        strum_vel_out_max = strum_vel_out_min;
+    }
+}
+
+void pic_midi_set_strum_vel_out_max(uint8_t v)
+{
+    if (v > 127) {
+        v = 127;
+    }
+    strum_vel_out_max = v;
+    if (strum_vel_out_max < strum_vel_out_min) {
+        strum_vel_out_min = strum_vel_out_max;
+    }
+}
+
+uint8_t pic_midi_get_strum_vel_out_min(void)
+{
+    return strum_vel_out_min;
+}
+
+uint8_t pic_midi_get_strum_vel_out_max(void)
+{
+    return strum_vel_out_max;
+}
+
+/* Default; runtime value set via pic_midi_set_hammer_on_strum_vel_percent / BLE 0x0A. */
+#define HAMMER_ON_STRUM_VEL_PERCENT_DEFAULT 75u
+
+static uint8_t hammer_on_strum_vel_percent = HAMMER_ON_STRUM_VEL_PERCENT_DEFAULT;
+
+void pic_midi_set_hammer_on_strum_vel_percent(uint8_t p)
+{
+    if (p > 100) {
+        p = 100;
+    }
+    hammer_on_strum_vel_percent = p;
+}
+
+uint8_t pic_midi_get_hammer_on_strum_vel_percent(void)
+{
+    return hammer_on_strum_vel_percent;
+}
+
+/* Last MIDI velocity from a real strum noteOn per string (for hammer % scaling). */
+static uint8_t last_strum_midi_velocity[4] = { 100, 100, 100, 100 };
 
 uint8_t findVelocity(float avg, float pot_mid_value, uint8_t prev_velocity) {
     (void)pot_mid_value; /* unused; avg is already deviation from mid */
 
     if (tapWithoutStrumEnabled)
-        return (uint8_t)STRUM_VEL_OUT_MAX;
+        return (uint8_t)strum_vel_out_max;
 
     /* Clamp input to valid range */
     if (avg < STRUM_VEL_IN_MIN)
@@ -292,26 +348,26 @@ uint8_t findVelocity(float avg, float pot_mid_value, uint8_t prev_velocity) {
 
     /* Map deflection to 0..1 with sqrt for better resolution at soft strums */
     float norm = (avg - STRUM_VEL_IN_MIN) / (STRUM_VEL_IN_MAX - STRUM_VEL_IN_MIN);
-    float v = (float)STRUM_VEL_OUT_MIN
-              + (float)(STRUM_VEL_OUT_MAX - STRUM_VEL_OUT_MIN) * sqrtf(norm);
+    float v = (float)strum_vel_out_min
+              + (float)(strum_vel_out_max - strum_vel_out_min) * sqrtf(norm);
 
     int velocityVal = (int)(v + 0.5f);
-    if (velocityVal < STRUM_VEL_OUT_MIN)
-        velocityVal = STRUM_VEL_OUT_MIN;
-    else if (velocityVal > STRUM_VEL_OUT_MAX)
-        velocityVal = STRUM_VEL_OUT_MAX;
+    if (velocityVal < strum_vel_out_min)
+        velocityVal = strum_vel_out_min;
+    else if (velocityVal > strum_vel_out_max)
+        velocityVal = strum_vel_out_max;
 
     /* Limit change from previous velocity to avoid spikes from bad readings */
-    if (prev_velocity >= STRUM_VEL_OUT_MIN) {
+    if (prev_velocity != 0) {
         int delta = velocityVal - (int)prev_velocity;
         if (delta > STRUM_VEL_MAX_DELTA)
             velocityVal = (int)prev_velocity + STRUM_VEL_MAX_DELTA;
         else if (delta < -STRUM_VEL_MAX_DELTA)
             velocityVal = (int)prev_velocity - STRUM_VEL_MAX_DELTA;
-        if (velocityVal < STRUM_VEL_OUT_MIN)
-            velocityVal = STRUM_VEL_OUT_MIN;
-        else if (velocityVal > STRUM_VEL_OUT_MAX)
-            velocityVal = STRUM_VEL_OUT_MAX;
+        if (velocityVal < strum_vel_out_min)
+            velocityVal = strum_vel_out_min;
+        else if (velocityVal > strum_vel_out_max)
+            velocityVal = strum_vel_out_max;
     }
 
     ESP_LOGD(TAG, "velocity value = %d (avg=%.0f)", velocityVal, (double)avg);
@@ -422,6 +478,7 @@ void noteOn(STRUM * strum, uint8_t c, uint8_t r) {
         ESP_LOGI(TAG, "freeze ckpt noteOn n=%lu c=%u", (unsigned long)s_noteon_count, (unsigned)c);
     }
     if (midi_strum_step_mode && midi_strum_step_try_note()) {
+        strum->hammerNoteOn = false;
         return;
     }
     uint8_t n;
@@ -446,18 +503,36 @@ void noteOn(STRUM * strum, uint8_t c, uint8_t r) {
 
 
     //Determine the velocity to send with the note
-    if(constantVelocityEnable==false){
+    if (strum->hammerNoteOn) {
+        strum->hammerNoteOn = false;
+        {
+            uint8_t base = last_strum_midi_velocity[c];
+            if (base < strum_vel_out_min) {
+                base = strum_vel_out_min;
+            }
+            velocityValue = (uint8_t)(((uint32_t)base * (uint32_t)hammer_on_strum_vel_percent) / 100u);
+            if (velocityValue < strum_vel_out_min) {
+                velocityValue = strum_vel_out_min;
+            } else if (velocityValue > strum_vel_out_max) {
+                velocityValue = strum_vel_out_max;
+            }
+        }
+        strum->strumVelocity = velocityValue;
+        vTaskDelay(0);
+    } else if(constantVelocityEnable==false){
         if(pluckedInstrument == true) // for plucked instrument get strumming derivative  for velocity
             velocityValue = findVelocity(strum->currentSampleN, 0, strum->strumVelocity);
         else // for bowed instrument get deflection for velocity
             velocityValue = findVelocity(strum->currentSampleN, 0, strum->strumVelocity);
 
         strum->strumVelocity = velocityValue;
+        last_strum_midi_velocity[c] = velocityValue;
         /* 1ms delay so BLE/watchdog get CPU; reduces freezes when constant velocity is off */
         vTaskDelay(pdMS_TO_TICKS(1));
     }else {
         velocityValue = constVelocityValue;
         strum->strumVelocity = velocityValue;
+        last_strum_midi_velocity[c] = velocityValue;
         /* Yield so BLE/ADC get CPU; reduces freezes when constant velocity is on */
         vTaskDelay(0);
     }

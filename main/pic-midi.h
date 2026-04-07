@@ -319,6 +319,12 @@ uint16_t fromMid(uint32_t, uint32_t, int);
 uint8_t returnBaseTable(uint8_t, uint8_t);
 
 void noteOn (STRUM *, uint8_t, uint8_t);
+void pic_midi_set_hammer_on_strum_vel_percent(uint8_t percent_0_to_100);
+uint8_t pic_midi_get_hammer_on_strum_vel_percent(void);
+void pic_midi_set_strum_vel_out_min(uint8_t midi_velocity_0_to_127);
+void pic_midi_set_strum_vel_out_max(uint8_t midi_velocity_0_to_127);
+uint8_t pic_midi_get_strum_vel_out_min(void);
+uint8_t pic_midi_get_strum_vel_out_max(void);
 void noteOff(STRUM *, uint8_t, uint8_t);
 void getNote(STRUM * strum, uint8_t c);
 
