@@ -38,6 +38,8 @@ extern uint8_t tuningIndex;
 cJSON *settings;
 
 char* midiFile = "/spiffs/1.mid";  // Define the pointer, initialized to default midi file
+/** SPIFFS MIDI library slots: `/spiffs/1.mid` … `/spiffs/N.mid` (SysEx upload + 0x53 select). */
+#define DIJI_MIDI_SPIFFS_SLOTS 10
 bool midiPause = false;
 bool midiStop = false;
 
@@ -1139,6 +1141,9 @@ void handleMessage(int8_t code, int8_t data){
     //play midi files
     else if(code==0x53)  //this doesnt exist on eTar app yet
     {
+        if (data < 1 || data > DIJI_MIDI_SPIFFS_SLOTS) {
+            return;
+        }
         char fileName[50];  // Adjust the array size as needed
 
         sprintf(fileName, "/spiffs/%d.mid", data); //data is the index of midi file in the spiffs e.g. /spiffs/1.mid
@@ -1642,7 +1647,7 @@ float fAbsoluteDiff(float x, float y) {
 
 /* ---- DijiApp: SPIFFS MIDI upload over BLE/USB (SysEx, educational ID 0x7D, 'MI') ----
  * Wire format (payload between F0 and F7 is 7-bit safe; data chunks use base64):
- *   F0 7D 4D 49 01 [slot 1-4] [total_size BE32] F7  — begin session
+ *   F0 7D 4D 49 01 [slot 1..10] [total_size BE32] F7  — begin session
  * NOTE: BE32 cannot be sent raw over BLE-MIDI because any payload byte >= 0x80
  * prematurely terminates the SysEx body in the BLE-MIDI parser. We therefore
  * encode total_size as 4x7-bit bytes:
@@ -1713,7 +1718,7 @@ static void process_diji_midi_upload_sysex(const uint8_t *data, size_t dlen) {
     uint8_t slot = data[4];
     uint32_t sz = decode_size_7bit(data + 5);
     diji_midi_upload_free_session();
-    if (slot < 1 || slot > 4) {
+    if (slot < 1 || slot > DIJI_MIDI_SPIFFS_SLOTS) {
       ESP_LOGW(TAG, "MIDI upload BEGIN: bad slot %u", (unsigned)slot);
       return;
     }
