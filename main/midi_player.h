@@ -38,6 +38,8 @@ uint32_t readVLQ(FILE *file);
 extern char * midiFile;
 extern bool midiPause;
 extern bool midiStop;
+/** When true, Play restarts the current file after it finishes (BLE 0x52 data 4 on, 5 off). */
+extern bool midi_play_loop;
 extern void inputToUART(uint8_t, uint8_t, uint8_t);
 extern uint32_t millis(void);
 

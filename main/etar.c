@@ -524,7 +524,13 @@ void etarTask(void *pvParameters)
   vTaskDelay(pdMS_TO_TICKS(80));
   for (int i = 0; i < 16; i++)
   {
-    inputToUART(0xC0 + i, 0x00 , 107); // Program Change - 107 koto
+    if (i == 9) {
+      /* GM channel 10 (0-based index 9) is percussion. Do not use melodic preset 107 (koto) here or
+       * drum .mid files will play as pitched instruments. Standard kit = program 0 on drum channel. */
+      inputToUART(0xC0 + 9, 0x00, 0);
+    } else {
+      inputToUART(0xC0 + i, 0x00, 107); // Program Change - 107 koto
+    }
   }
   //vTaskDelay(pdMS_TO_TICKS(80));
   //repeat sending sustain messges to make sure that all channels get the sustain message

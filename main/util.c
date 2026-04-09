@@ -1129,6 +1129,11 @@ void handleMessage(int8_t code, int8_t data){
             midiPause = true;
             midi_player_panic_all_channels();
         }
+        else if (data == 4) { /* loop playback on */
+            midi_play_loop = true;
+        } else if (data == 5) { /* loop playback off */
+            midi_play_loop = false;
+        }
     }
 
     //play midi files

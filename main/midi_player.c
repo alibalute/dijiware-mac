@@ -226,6 +226,9 @@ typedef struct {
     uint32_t us_per_qn;
 } MidiTempoPoint;
 
+/** When true, sequencer restarts playback after the file ends (set via BLE handleMessage 0x52, data 4/5). */
+bool midi_play_loop = false;
+
 static bool s_midi_stream_mode;
 static MidiTempoPoint *s_stream_tp;
 static size_t s_stream_tp_n;
@@ -969,6 +972,9 @@ static void midi_stream_sequencer_task(void *pvParameters)
 
     stream_track_play(file, tend, tp, tp_n, tpqn, us0);
     fclose(file);
+    if (!midiStop && midi_play_loop) {
+        play_midi_file();
+    }
     vTaskDelete(NULL);
 }
 
@@ -1390,30 +1396,47 @@ uint32_t read_variable_length(FILE *file) {
     return value;
 }
 
+/** GM / General MIDI: channel 10 (1-based) = index 9 — percussion kit; note numbers are drum map keys, not scale pitches. */
+#define MIDI_CH_GM_PERCUSSION 9u
+
 // MIDI output function (replace with actual MIDI output logic)
 void send_midi_event(MidiEvent *event)
 {
     uint8_t st = event->status;
     uint8_t hi = (uint8_t)(st & 0xF0);
+    const bool drum_track = (event->channel == MIDI_CH_GM_PERCUSSION);
+
     if (hi == 0xC0) {
-        /* Program change: same convention as handleMessage 0x16 (util.c). */
+        /* Program change: melody tracks follow handleMessage 0x16 (util.c). Drum kit stays on GM channel 10. */
         uint8_t prog = event->note;
-        inputToUART((uint8_t)(0xC0 + semitoneChannel), 0x00, prog);
-        inputToUART((uint8_t)(0xC0 + quartertoneChannel), 0x00, prog);
+        if (drum_track) {
+            inputToUART((uint8_t)(0xC0 + MIDI_CH_GM_PERCUSSION), 0x00, prog);
+        } else {
+            inputToUART((uint8_t)(0xC0 + semitoneChannel), 0x00, prog);
+            inputToUART((uint8_t)(0xC0 + quartertoneChannel), 0x00, prog);
+        }
         return;
     }
     if (hi == 0xB0 && event->note == 0x40) {
         /* Sustain pedal (CC 64); same as sustain handling in util.c. */
         uint8_t val = event->velocity;
-        inputToUART((uint8_t)(0xB0 + semitoneChannel), 0x40, val);
-        inputToUART((uint8_t)(0xB0 + quartertoneChannel), 0x40, val);
+        if (drum_track) {
+            inputToUART((uint8_t)(0xB0 + MIDI_CH_GM_PERCUSSION), 0x40, val);
+        } else {
+            inputToUART((uint8_t)(0xB0 + semitoneChannel), 0x40, val);
+            inputToUART((uint8_t)(0xB0 + quartertoneChannel), 0x40, val);
+        }
         return;
     }
     if (hi == 0x80 || hi == 0x90 || hi == 0xE0) {
-        st = (uint8_t)(hi | (semitoneChannel & 0x0F));
+        st = drum_track ? (uint8_t)(hi | (MIDI_CH_GM_PERCUSSION & 0x0F))
+                        : (uint8_t)(hi | (semitoneChannel & 0x0F));
     }
     /* Pitch bend data is two raw bytes (LSB, MSB); do not transpose it. */
     if (hi == 0xE0) {
+        inputToUART(st, event->note, event->velocity);
+    } else if (drum_track && (hi == 0x80 || hi == 0x90)) {
+        /* Drum map keys must not be transposed like melodic notes. */
         inputToUART(st, event->note, event->velocity);
     } else {
         inputToUART(st, event->note + transposeValue, event->velocity);
@@ -1464,7 +1487,9 @@ void midi_sequencer_task(void *pvParameters) {
         send_midi_event(&events[i]);
     }
 
-    
+    if (!midiStop && midi_play_loop) {
+        play_midi_file();
+    }
     vTaskDelete(NULL);
 }
 
