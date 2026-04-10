@@ -207,9 +207,15 @@
       </header>
       <div class="card">
         <div class="form-card">
+          <div id="firmware-from-app" class="warning-box" style="display:none;margin-bottom:16px;">
+            <b>Firmware from Dijilele app</b>
+            <hr>
+            <p id="firmware-from-app-status" style="margin:0;"></p>
+          </div>
           <form id="update-form">
             <label for="firmware">Firmware file</label>
-            <input id="firmware" name="firmware" type="file" accept=".bin" required />
+            <input id="firmware" name="firmware" type="file" accept=".bin" />
+            <p style="margin:8px 0 0;font-size:0.8125rem;color:#3E4A56;">If you opened this page from the Dijilele app (same browser), the downloaded .bin can load automatically. Otherwise choose a file.</p>
             <button id="update" type="submit" class="btn">Update Firmware</button>
           </form>
         </div>
@@ -231,17 +237,72 @@
       </div>
     </div>
     <script>
+      var pendingFirmwareFile = null;
+
+      function requestFirmwareFromApp() {
+        try {
+          if (window.opener) {
+            window.opener.postMessage({ type: 'DIJI_REQUEST_PENDING_FIRMWARE' }, '*');
+          }
+        } catch (err) {}
+        try {
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({ type: 'DIJI_REQUEST_PENDING_FIRMWARE' }, '*');
+          }
+        } catch (err) {}
+      }
+
+      window.addEventListener('message', function (ev) {
+        if (!ev.data) return;
+        if (ev.data.type === 'DIJI_FIRMWARE_NONE') {
+          var box = document.getElementById('firmware-from-app');
+          if (box) box.style.display = 'none';
+          pendingFirmwareFile = null;
+          return;
+        }
+        if (ev.data.type !== 'DIJI_FIRMWARE' || !ev.data.buffer) return;
+        var fromOpener = window.opener && ev.source === window.opener;
+        var fromParent = window.parent !== window && ev.source === window.parent;
+        /* iOS WKWebView: parent→child cross-origin messages may not satisfy source === window.parent. */
+        if (!fromOpener && !fromParent && window.parent !== window) {
+          if (ev.origin && ev.origin !== window.location.origin && /^https?:\/\//.test(ev.origin)) {
+            fromParent = true;
+          }
+          /* WebKit often omits origin (empty string) on parent→iframe postMessage — do not reject. */
+          if (!fromParent && (!ev.origin || ev.origin === '')) {
+            fromParent = true;
+          }
+        }
+        if (!fromOpener && !fromParent) return;
+        var buf = ev.data.buffer;
+        var name = ev.data.name || 'firmware.bin';
+        pendingFirmwareFile = new File([buf], name, { type: 'application/octet-stream' });
+        var box = document.getElementById('firmware-from-app');
+        var st = document.getElementById('firmware-from-app-status');
+        if (box) box.style.display = 'block';
+        if (st) {
+          st.textContent = name + ' (' + buf.byteLength + ' bytes). Ready to upload.';
+        }
+        var fi = document.getElementById('firmware');
+        if (fi) fi.removeAttribute('required');
+      });
+
+      requestFirmwareFromApp();
+      setTimeout(requestFirmwareFromApp, 400);
+      setTimeout(requestFirmwareFromApp, 1200);
+      setTimeout(requestFirmwareFromApp, 3000);
+
       document.getElementById('update-form').onsubmit = function(e) {
         e.preventDefault();
         var fileInput = document.getElementById('firmware');
         var statusEl = document.getElementById('status');
-        if (!fileInput.files.length) {
+        var file = pendingFirmwareFile || (fileInput.files && fileInput.files[0]);
+        if (!file) {
           statusEl.style.display = 'block';
           statusEl.className = 'status-box error';
-          statusEl.innerHTML = '<p>Please select a firmware file.</p>';
+          statusEl.innerHTML = '<p>Please select a firmware file, or open this page from the Dijilele app after downloading the .bin there.</p>';
           return false;
         }
-        var file = fileInput.files[0];
         var formData = new FormData();
         formData.append('firmware', file);
         statusEl.style.display = 'block';

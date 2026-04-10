@@ -34,6 +34,8 @@ extern bool isBLEConnected(void);
 extern bool isUSBConnected(void);
 extern bool bluetoothConnected;
 extern uint8_t tuningIndex;
+/** WiFi AP + HTTP OTA (main.c); toggled by long-press cmd or BLE handleMessage 0x5C. */
+extern bool wifiOn;
 
 cJSON *settings;
 
@@ -739,6 +741,15 @@ void handleMessage(int8_t code, int8_t data){
     } else if (code == 0x5B) {
         /* Strum dynamics: max MIDI velocity (0–127); pic-midi.c findVelocity output ceiling */
         pic_midi_set_strum_vel_out_max((uint8_t)data);
+    } else if (code == 0x5C) {
+        /* WiFi AP + HTTP server for OTA (same as holding cmd button ~5s on device). data: 1=on, 0=off */
+        if (data == 0x01) {
+            wifiOn = true;
+            ESP_LOGI(TAG, "WiFi OTA server requested ON (BLE 0x5C)");
+        } else if (data == 0x00) {
+            wifiOn = false;
+            ESP_LOGI(TAG, "WiFi OTA server requested OFF (BLE 0x5C)");
+        }
     }else if (code == 0x1B) { 			//effects toggle
         if (data == 0x00) {
             effectsEnabled = false;

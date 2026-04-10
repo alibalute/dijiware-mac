@@ -16,6 +16,7 @@
 #include <string.h>
 
 #if !defined(__APPLE__)
+#include "http_ota_cors.h"
 #include "esp_flash_partitions.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -632,6 +633,8 @@ FirmwareUpdater::FirmwareUpdater() { esp_log_level_set(TAG, DEBUG_LEVEL); }
 
 esp_err_t FirmwareUpdater::handler(httpd_req *req) {
   switch (req->method) {
+    case HTTP_OPTIONS:
+      return httpd_resp_send_cors_options(req);
     // case HTTP_GET: {
     //   cJSON* currentConfig = getJson();
     //   char* json = cJSON_Print(currentConfig);
@@ -639,6 +642,7 @@ esp_err_t FirmwareUpdater::handler(httpd_req *req) {
     //   return httpd_resp_send(req, json, strlen(json));
     // }
     case HTTP_POST: {
+      httpd_resp_set_cors(req);
       ESP_LOGD(TAG, "Receiving %u bytes", req->content_len);
 
       otaStarted = false;
@@ -695,10 +699,14 @@ esp_err_t FirmwareUpdater::handler(httpd_req *req) {
 }
 
 esp_err_t FirmwareUpdater::storageHandler(httpd_req_t *req) {
+  if (req->method == HTTP_OPTIONS) {
+    return httpd_resp_send_cors_options(req);
+  }
   if (req->method != HTTP_POST) {
     httpd_resp_send_err(req, HTTPD_405_METHOD_NOT_ALLOWED, NULL);
     return ESP_FAIL;
   }
+  httpd_resp_set_cors(req);
   storageUploadFailed = false;
   s_storage_fail_reason[0] = '\0';
 

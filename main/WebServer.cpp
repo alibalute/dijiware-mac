@@ -10,6 +10,7 @@
  */
 
 #include "WebServer.h"
+#include "http_ota_cors.h"
 #include "ota_debug.h"
 #include <string.h>
 
@@ -37,8 +38,12 @@ Alias aliases[] = {
 int numAliases = sizeof(aliases) / sizeof(Alias);
 
 static esp_err_t debugHandler(httpd_req_t* req) {
+  if (req->method == HTTP_OPTIONS) {
+    return httpd_resp_send_cors_options(req);
+  }
   char buf[320];
   ota_debug_get_json(buf, sizeof(buf));
+  httpd_resp_set_cors(req);
   httpd_resp_set_type(req, "application/json");
   return httpd_resp_send(req, buf, strlen(buf));
 }
@@ -47,20 +52,20 @@ Api apis[] = {
     {
         .name = "update",
         .handler = FIRMWARE_HANDLER,
-        .numMethods = 1,
-        .methods = {HTTP_POST},
+        .numMethods = 2,
+        .methods = {HTTP_POST, HTTP_OPTIONS},
     },
     {
         .name = "storage",
         .handler = STORAGE_HANDLER,
-        .numMethods = 1,
-        .methods = {HTTP_POST},
+        .numMethods = 2,
+        .methods = {HTTP_POST, HTTP_OPTIONS},
     },
     {
         .name = "debug",
         .handler = DEBUG_HANDLER,
-        .numMethods = 1,
-        .methods = {HTTP_GET},
+        .numMethods = 2,
+        .methods = {HTTP_GET, HTTP_OPTIONS},
     },
 };
 int numApis = sizeof(apis) / sizeof(Api);
