@@ -4,6 +4,12 @@
 # CMakeLists in this exact order for cmake to work correctly
 cmake_minimum_required(VERSION 3.5)
 
+# Single source of truth for BLE/UI “firmware version” (see main.c sscanf on esp_app_desc_t::version).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/version.txt")
+  file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/version.txt" PROJECT_VER LIMIT_COUNT 1)
+  string(STRIP "${PROJECT_VER}" PROJECT_VER)
+endif()
+
 # IDF_PATH must point to a valid ESP-IDF install (set by export.sh / export.bat)
 if(NOT DEFINED ENV{IDF_PATH})
   message(FATAL_ERROR "IDF_PATH is not set. Source the ESP-IDF export script first, e.g.: source $HOME/.espressif/esp-idf/export.sh")
