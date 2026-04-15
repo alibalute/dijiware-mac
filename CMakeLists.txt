@@ -20,3 +20,18 @@ if(NOT EXISTS "${idf_project_cmake}")
 endif()
 include("${idf_project_cmake}")
 project(dijilele)
+
+# After every build: copy the flashable .bin into firmware/dijilele-<version>.bin (same as ./mvfw).
+# Use TARGET app so this runs after elf2image produces ${PROJECT_NAME}.bin, not only after linking the .elf.
+if(DEFINED PROJECT_VER AND NOT PROJECT_VER STREQUAL "")
+  add_custom_command(
+    TARGET app
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/firmware"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin"
+            "${CMAKE_SOURCE_DIR}/firmware/dijilele-${PROJECT_VER}.bin"
+    COMMENT "Copy -> firmware/dijilele-${PROJECT_VER}.bin"
+    VERBATIM
+  )
+endif()
