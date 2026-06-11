@@ -8,8 +8,14 @@
         "task.h": "c"
     },
     "idf.idfPath": "/Users/dijilele/esp/v5.0.2/esp-idf",
+    "idf.espIdfPath": "/Users/dijilele/esp/v5.0.2/esp-idf",
+    "idf.toolsPath": "/Users/dijilele/.espressif",
     "idf.port": "/dev/tty.usbserial-BG03TWY5",
     "idf.pythonBinPath": "/Users/dijilele/.espressif/python_env/idf5.0_py3.11_env/bin/python",
-    "idf.customExtraPaths": "/Users/dijilele/.espressif/python_env/idf5.0_py3.11_env/bin:/Users/dijilele/esp/v5.0.2/esp-idf/tools",
+    "idf.customExtraPaths": "/Users/dijilele/.espressif/python_env/idf5.0_py3.11_env/bin:/opt/homebrew/bin:/Users/dijilele/.espressif/tools/ninja/1.10.2:/Users/dijilele/.espressif/tools/xtensa-esp32s3-elf/esp-2022r1-11.2.0/xtensa-esp32s3-elf/bin:/Users/dijilele/.espressif/tools/xtensa-esp32-elf/esp-2022r1-11.2.0/xtensa-esp32-elf/bin:/Users/dijilele/.espressif/tools/esp32ulp-elf/2.35_20220830/esp32ulp-elf/bin:/Users/dijilele/esp/v5.0.2/esp-idf/tools",
+    "idf.customExtraVars": {
+        "OPENOCD_SCRIPTS": "/Users/dijilele/.espressif/tools/openocd-esp32/v0.11.0-esp32-20221026/openocd-esp32/share/openocd/scripts",
+        "ESP_ROM_ELF_DIR": "/Users/dijilele/.espressif/tools/esp-rom-elfs/20220823/"
+    },
     "idf.flashType": "UART"
 }
