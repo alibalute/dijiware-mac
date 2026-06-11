@@ -222,7 +222,7 @@ bool stringEnabledArray[4] = {true, true, true, true};
 // Setting Values
 uint8_t workingBaseTable[4] = {A4, E4, C4, G4};
 
-uint8_t tuningIndex = 0;                                // Preset Tuning Row
+uint8_t tuningIndex = 14;                               /* baseTable row: A4 E4 C4 G4 */
 int16_t transposeValue = 0;
 int16_t pitchChangeValue = 0;
 uint8_t tempoValue = 60; //60 bpm

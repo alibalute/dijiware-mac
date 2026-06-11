@@ -443,7 +443,7 @@ void send_ble_settings_snapshot(void)
         return;
     }
     init_spiffs();
-    cJSON *j = load_settings_from_flash("/spiffs/settings.json");
+    cJSON *j = load_user_settings_from_flash();
     if (j == NULL) {
         j = build_runtime_settings_json();
     }
@@ -492,7 +492,7 @@ void send_ble_settings_snapshot(void)
 
 void load_settings_at_boot(void) {
     init_spiffs();
-    cJSON *loaded = load_settings_from_flash("/spiffs/settings.json");
+    cJSON *loaded = load_user_settings_from_flash();
     if (loaded != NULL) {
         apply_loaded_settings(loaded);
         cJSON_Delete(loaded);
@@ -1195,7 +1195,7 @@ void handleMessage(int8_t code, int8_t data){
             }
 
             // Save settings to flash
-            if (save_settings_to_flash("/spiffs/settings.json", settings)) {
+            if (save_settings_to_flash(settings_json_path(), settings)) {
                 char *written = cJSON_PrintUnformatted(settings);
                 ESP_LOGI(TAG, "Write to flash successful. Written: %s", written ? written : "");
                 if (written) {
@@ -1213,9 +1213,9 @@ void handleMessage(int8_t code, int8_t data){
 
 
 
-        else if(data == 2){ // factory reset: load factory.json and apply
+        else if(data == 2){ // factory reset: load factory defaults and apply
             init_spiffs();
-            cJSON *loaded_settings = load_settings_from_flash("/spiffs/factory.json");
+            cJSON *loaded_settings = load_settings_from_flash(factory_json_path());
             if (loaded_settings != NULL) {
                 char *loaded_str = cJSON_Print(loaded_settings);
                 apply_loaded_settings(loaded_settings);
@@ -1226,7 +1226,7 @@ void handleMessage(int8_t code, int8_t data){
         }
         else if(data == 3){  // dump settings file to log (view without loading)
             init_spiffs();
-            cJSON *loaded_settings = load_settings_from_flash("/spiffs/settings.json");
+            cJSON *loaded_settings = load_user_settings_from_flash();
             if (loaded_settings != NULL) {
                 char *loaded_str = cJSON_Print(loaded_settings);
                 ESP_LOGI(TAG, "Settings file contents:\n%s", loaded_str);
