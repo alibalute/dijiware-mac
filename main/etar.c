@@ -350,6 +350,13 @@ bool acousticSetarFretsEnabled = false;
 #define STRING_DRIFT_THRESHOLD 500
 #endif
 
+/* Min ADC delta to detect tap press/release (ukulele first fret is a smaller change than setar) */
+#if defined(INST_UKULELE)
+#define TAP_ADC_THRESHOLD 250
+#else
+#define TAP_ADC_THRESHOLD 500
+#endif
+
 /* Set in etarTask when (iter % FREEZE_CKPT_MOD == 0); ProcessIO logs checkpoints when true. Outside INST_* so always declared. */
 static bool s_etar_log_ckpt;
 
@@ -1085,7 +1092,7 @@ void ProcessIO(void)
         {
           //any fret value change?
           if(fAbsoluteDiff(currTapAverage, tap[atString].previousFretSample) >=
-               500)
+               TAP_ADC_THRESHOLD)
           {
             if(tap[atString].debounceCount == 2 )
             {
@@ -1142,7 +1149,7 @@ void ProcessIO(void)
         else{ //tapPressed = true
 
           if(fAbsoluteDiff(currTapAverage, tap[atString].previousFretSample) >=
-               500)  //fret value changed
+               TAP_ADC_THRESHOLD)  //fret value changed
           {
             tap[atString].tapPressed = false;
             if (tap[atString].tapNoteIsPlayed) {
