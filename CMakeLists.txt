@@ -21,17 +21,29 @@ endif()
 include("${idf_project_cmake}")
 project(dijilele)
 
-# After every build: copy the flashable .bin into firmware/dijilele-<version>.bin (same as ./mvfw).
-# Use TARGET app so this runs after elf2image produces ${PROJECT_NAME}.bin, not only after linking the .elf.
+# After every build: copy the flashable .bin into firmware/ with an OTA-friendly name
+# (matches DijiApp: <slug>-<major>-<minor>-<patch>.bin, e.g. dijilele-m-1-0-4.bin).
+# Product slug comes from DIJILELE_PRODUCT_ID (set by build-4mb.sh / build-16mb.sh).
 if(DEFINED PROJECT_VER AND NOT PROJECT_VER STREQUAL "")
+  set(DIJILELE_OTA_SLUG "unknown")
+  if(DEFINED ENV{DIJILELE_PRODUCT_ID} AND NOT "$ENV{DIJILELE_PRODUCT_ID}" STREQUAL "")
+    if("$ENV{DIJILELE_PRODUCT_ID}" STREQUAL "1")
+      set(DIJILELE_OTA_SLUG "dijilele-m")
+    elseif("$ENV{DIJILELE_PRODUCT_ID}" STREQUAL "2")
+      set(DIJILELE_OTA_SLUG "dijilele-s")
+    endif()
+  endif()
+  string(REPLACE "." "-" PROJECT_VER_OTA "${PROJECT_VER}")
+  set(DIJILELE_OTA_BIN "${DIJILELE_OTA_SLUG}-${PROJECT_VER_OTA}.bin")
   add_custom_command(
     TARGET app
     POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/firmware"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin"
-            "${CMAKE_SOURCE_DIR}/firmware/dijilele-${PROJECT_VER}.bin"
-    COMMENT "Copy -> firmware/dijilele-${PROJECT_VER}.bin"
+            "${CMAKE_SOURCE_DIR}/firmware/${DIJILELE_OTA_BIN}"
+    COMMAND bash "${CMAKE_SOURCE_DIR}/update-ota-manifest.sh"
+    COMMENT "Copy -> firmware/${DIJILELE_OTA_BIN}; update OTA manifest"
     VERBATIM
   )
 endif()

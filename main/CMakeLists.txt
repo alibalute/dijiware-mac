@@ -33,6 +33,10 @@ idf_component_register(SRCS main.c
   EMBED_TXTFILES "index.html" "images/logo.png"
   
   INCLUDE_DIRS "." )
+
+if(DEFINED ENV{DIJILELE_PRODUCT_ID} AND NOT "$ENV{DIJILELE_PRODUCT_ID}" STREQUAL "")
+  target_compile_definitions(${COMPONENT_LIB} PRIVATE DIJILELE_PRODUCT_ID=$ENV{DIJILELE_PRODUCT_ID})
+endif()
   
   spiffs_create_partition_image(storage ../spiffs_img FLASH_IN_PROJECT)
 

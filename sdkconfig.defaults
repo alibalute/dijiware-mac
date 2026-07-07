@@ -4,12 +4,8 @@
 # Target chip (required for esp_tinyusb; use esp32s3 for this project)
 CONFIG_IDF_TARGET="esp32s3"
 
-# Use custom partition table that includes the "storage" SPIFFS partition
+# Use custom partition table (see partitions_4mb.csv / partitions_16mb.csv).
 CONFIG_PARTITION_TABLE_CUSTOM=y
-CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
-
-# Flash size: partition table is for 16MB (see partitions.csv). Serial Flasher Config.
-CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 
 #
 # BT config

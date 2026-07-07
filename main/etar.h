@@ -16,9 +16,8 @@
 
 // The type of instrument that the flash will be loaded onto
 // eTar
-#define INST_SETAR
-//#define INST_TANBOUR  //disables strings 2 and 3
-//#define INST_UKULELE
+//#define INST_DIJILELE_M
+#define INST_DIJILELE_S
 
 #define STRUM_DERIVATIVE
 /* Option: STRUM_DEFLECTION = deflection threshold (note-on/off by position). Dynamic center + hysteresis in etar.c make it viable. */

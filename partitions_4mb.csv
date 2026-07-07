@@ -1,0 +1,9 @@
+# Dijilele — 4 MB flash (ESP32-S3 boards with 4 Mbit SPI flash)
+# Name,      Type, SubType, Offset,   Size,   Flags
+nvs,         data, nvs,     ,        0x6000,
+otadata,     data, ota,     ,        0x2000,
+phy_init,    data, phy,     ,        0x1000,
+storagefat,  data, fat,     ,        256K,
+ota_0,       app,  ota_0,   ,        1536K,
+ota_1,       app,  ota_1,   ,        1536K,
+storage,     data, spiffs,  ,        512K,

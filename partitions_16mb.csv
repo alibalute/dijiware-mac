@@ -1,7 +1,4 @@
-# Default partition table (16 MB). Prefer explicit hardware builds:
-#   ./build-4mb.sh   -> partitions_4mb.csv
-#   ./build-16mb.sh  -> partitions_16mb.csv
-#
+# Dijilele — 16 MB flash (ESP32-S3 boards with 16 Mbit SPI flash)
 # Name,      Type, SubType, Offset,   Size,   Flags
 nvs,         data, nvs,     ,        0x6000,
 otadata,     data, ota,     ,        0x2000,

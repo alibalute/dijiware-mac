@@ -10,6 +10,7 @@
  */
 
 #include "ble.h"
+#include "dijilele_product.h"
 // #include "driver/gpio.h"
 #include "interfaces.h"
 #include <stdint.h>
@@ -32,7 +33,7 @@ extern char appVersion[];
 static bool bleConnected = false;
 
 /* Private BLE status codes for app telemetry (carried over BLE-MIDI characteristic):
- * 0x57 -> firmware major, 0x58 -> minor, 0x59 -> patch. */
+ * 0x57 -> firmware major, 0x58 -> minor, 0x59 -> patch, 0x5D -> product profile id. */
 static void sendFirmwareVersion(void) {
   unsigned major = 0, minor = 0, patch = 0;
   if (sscanf(appVersion, "%u.%u.%u", &major, &minor, &patch) != 3) {
@@ -49,7 +50,10 @@ static void sendFirmwareVersion(void) {
   msg[0] = 0x57; msg[1] = (uint8_t)major; blemidi_send_message(0, msg, sizeof(msg));
   msg[0] = 0x58; msg[1] = (uint8_t)minor; blemidi_send_message(0, msg, sizeof(msg));
   msg[0] = 0x59; msg[1] = (uint8_t)patch; blemidi_send_message(0, msg, sizeof(msg));
-  ESP_LOGI(TAG, "Sent FW version %u.%u.%u over BLE", major, minor, patch);
+  msg[0] = DIJILELE_TELEMETRY_PRODUCT;
+  msg[1] = (uint8_t)DIJILELE_PRODUCT_ID;
+  blemidi_send_message(0, msg, sizeof(msg));
+  ESP_LOGI(TAG, "Sent FW %u.%u.%u product %d over BLE", major, minor, patch, DIJILELE_PRODUCT_ID);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

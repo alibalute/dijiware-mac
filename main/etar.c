@@ -218,7 +218,7 @@ bool stringEnabledArray[4] = {true, true, true, true};
 /**********************************************************************
  * Instrument Specific Variables
  *********************************************************************/
-#ifdef INST_UKULELE
+#ifdef INST_DIJILELE_S
 // Setting Values
 uint8_t workingBaseTable[4] = {A4, E4, C4, G4};
 
@@ -280,7 +280,7 @@ bool percussionInstrument = false;
 bool acousticSetarFretsEnabled = false;
 #endif
 
-#ifdef INST_SETAR
+#ifdef INST_DIJILELE_M
 ///// Setting Values /////
 uint8_t workingBaseTable[4] = {C4, G3, C4, C3}; // Note for each string , default
 uint8_t tuningIndex = 0;                                // Preset Tuning Row
@@ -342,16 +342,16 @@ bool acousticSetarFretsEnabled = false;
 #endif
 
 /* Threshold for string ADC drift before updating fretBarMaxValue (instrument-specific) */
-#if defined(INST_UKULELE)
+#if defined(INST_DIJILELE_S)
 #define STRING_DRIFT_THRESHOLD 150
-#elif defined(INST_SETAR)
+#elif defined(INST_DIJILELE_M)
 #define STRING_DRIFT_THRESHOLD 500
 #else
 #define STRING_DRIFT_THRESHOLD 500
 #endif
 
 /* Min ADC delta to detect tap press/release (ukulele first fret is a smaller change than setar) */
-#if defined(INST_UKULELE)
+#if defined(INST_DIJILELE_S)
 #define TAP_ADC_THRESHOLD 250
 #else
 #define TAP_ADC_THRESHOLD 500
@@ -1693,7 +1693,7 @@ void checkSleep()
 
 }
 
-#ifdef INST_SETAR
+#ifdef INST_DIJILELE_M
 void changeSetting(TAP *tap, uint8_t atString) {
   uint8_t settingFret = tap->fret;
   switch (settingFret) {
@@ -2000,7 +2000,7 @@ void changeSetting(TAP *tap, uint8_t atString) {
 }
 #endif
 
-#ifdef INST_UKULELE
+#ifdef INST_DIJILELE_S
 
 void changeSetting(TAP *tap, uint8_t atString) {
   uint8_t settingFret = tap->fret / 2; //frets are in quarter tones so divide by 2 to get semitone for uke
@@ -2008,7 +2008,7 @@ void changeSetting(TAP *tap, uint8_t atString) {
     settingFret = 1; // to avoid fret 0 **** for some reason this doesnt work so skipped settingFret 1
 
   switch (settingFret) {
-    case 2:
+    case 1:
       // Tuning
       if (atString == 0)
         handleMessage(0x0E, 14);  // tuningIndex 0, A4 E4 C4 G4 Uke 1
@@ -2019,18 +2019,18 @@ void changeSetting(TAP *tap, uint8_t atString) {
       else if (atString == 3)
         handleMessage(0x0E, 17);  // tuningIndex 26, A4 D4 G3 C3 Banjo
       break;
-    case 3:
+    case 2:
       // Instrument
       if (atString == 0)
-        handleMessage(0x16, 104);  // 104, sitar
+        handleMessage(0x16, 0);  // 0, Grand piano0
       else if (atString == 1)
-        handleMessage(0x16, 107);  // 107, koto
+        handleMessage(0x16, 9);  // 9, glockenspiel
       else if (atString == 2)
-        handleMessage(0x16, 24);  // 24, nylon guitar
+        handleMessage(0x16, 33);  // 33, electricbase guitar
       else if (atString == 3)
-        handleMessage(0x16, 41);  // 41, viola
+        handleMessage(0x16, 40);  // 40, viola
       break;
-    case 4:
+    case 3:
       // Tapping
       if (atString == 0)
         handleMessage(0x06, 1);  // tapping enabled
@@ -2043,7 +2043,7 @@ void changeSetting(TAP *tap, uint8_t atString) {
       else if (atString == 3)
         handleMessage(0x33, 0);  // tapping without strumming disabled
       break;
-    case 5:
+    case 4:
       // Pedal/left hand
       if (atString == 0)
         handleMessage(0x14, 1);  // left hand enabled
@@ -2054,7 +2054,7 @@ void changeSetting(TAP *tap, uint8_t atString) {
       else if (atString == 3)
         handleMessage(0x01, 0);  // sustain pedal disabled
       break;
-    case 6:
+    case 5:
       // chords/drums
       if (atString == 0)
         handleMessage(0x35, 1);  // chord mode enabled
@@ -2065,7 +2065,7 @@ void changeSetting(TAP *tap, uint8_t atString) {
       else if (atString == 3)
         handleMessage(0x32, 0);  // percussion enabled
       break;
-    case 7:
+    case 6:
       // Transpose
       if (atString == 0) {
         transposeValue += 7;
@@ -2083,7 +2083,7 @@ void changeSetting(TAP *tap, uint8_t atString) {
         handleMessage(0x19, transposeValue);  // zero transpose
       }
       break;
-    case 8:
+    case 7:
       // vibrato
       if (atString == 0) {
         handleMessage(0x0D, 10);  // set vibrato value to max
@@ -2095,7 +2095,7 @@ void changeSetting(TAP *tap, uint8_t atString) {
         handleMessage(0x0D, 0);  // zero vibrato
       }
       break;
-    case 9:
+    case 8:
 
       // Metronome 8
       if (atString == 0)
@@ -2113,7 +2113,7 @@ void changeSetting(TAP *tap, uint8_t atString) {
       }
       break;
 
-    case 10:
+    case 9:
       // Metronome beats 9
       if (atString == 0)
       {
@@ -2133,7 +2133,7 @@ void changeSetting(TAP *tap, uint8_t atString) {
         handleMessage(0x50, metronomeNumBeats);  // 4 beats
       }
       break;
-    case 11:
+    case 10:
 
       if (atString == 0){
         metronomeVol = 127;
@@ -2153,7 +2153,7 @@ void changeSetting(TAP *tap, uint8_t atString) {
       }
       break;
 
-    case 12:
+    case 11:
 
       // strum sensitivity
       if (atString == 0)

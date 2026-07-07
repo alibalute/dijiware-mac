@@ -29,7 +29,7 @@ static const char *TAG = "pic-midi";
 
 
 
-#ifdef INST_UKULELE
+#ifdef INST_DIJILELE_S
     #ifdef HALF_CIRCUIT_MEMBRANE
     const  float fretRatio[13] = {
         0.9615384615,
@@ -68,7 +68,7 @@ static const char *TAG = "pic-midi";
 
 #endif
 
-#ifdef INST_SETAR
+#ifdef INST_DIJILELE_M
 const  float fretRatio[41] = {
     //0.99,
     0.987804877,
@@ -201,10 +201,10 @@ int fretVoltageToFretNumber(float fretVoltage)
     int fretNumber = 0,i;
     //look at the resistance ratio at the finger depressing point and compare it to the fret resistance table to find the note offset
     //for ( i = 0 ; i < 160 ; i++) {   //check all traces
-#ifdef INST_SETAR
+#ifdef INST_DIJILELE_M
      for (i = 0; i < 40; i++) { //check all traces
 #endif
-#ifdef INST_UKULELE
+#ifdef INST_DIJILELE_S
      for (i = 0; i < 12; i++) { //check all traces
 #endif
         if (fretVoltageRatio >= fretRatio[0]) { //If open string
@@ -215,10 +215,10 @@ int fretVoltageToFretNumber(float fretVoltage)
             break;
         }
     }
-#ifdef INST_SETAR
+#ifdef INST_DIJILELE_M
      return fretNumber;
 #endif
-#ifdef INST_UKULELE
+#ifdef INST_DIJILELE_S
      return fretNumber*2;
 #endif
     
@@ -1073,13 +1073,13 @@ void tapNoteOff(TAP * tap, uint8_t c, uint8_t r) {
 uint8_t getFretNumberForString(uint8_t c, float adcFretAverage) {
     int i, noteOffset = 0;
     float fretVoltageRatio = adcFretAverage / fretBarMaxValue[c];
-#ifdef INST_SETAR
+#ifdef INST_DIJILELE_M
     for (i = 0; i < 40; i++) {
 #endif
-#ifdef INST_UKULELE
+#ifdef INST_DIJILELE_S
     for (i = 0; i < 12; i++) {
 #endif
-#if defined(INST_SETAR) || defined(INST_UKULELE)
+#if defined(INST_DIJILELE_M) || defined(INST_DIJILELE_S)
         if (fretVoltageRatio >= fretRatio[0]) {
             noteOffset = 0;
             break;
@@ -1089,10 +1089,10 @@ uint8_t getFretNumberForString(uint8_t c, float adcFretAverage) {
         }
     }
 #endif
-#ifdef INST_UKULELE
+#ifdef INST_DIJILELE_S
     noteOffset = noteOffset * 2;
 #endif
-#ifdef INST_SETAR
+#ifdef INST_DIJILELE_M
     if (acousticSetarFretsEnabled) {
         switch (noteOffset) {
             case 1: case 2: noteOffset = 3; break;
@@ -1150,10 +1150,10 @@ void getNote(STRUM * strum, uint8_t c) {
     //look at the resistance ratio at the finger depressing point and compare it to the fret resistance table to find the note offset
     //for ( i = 0 ; i < 160 ; i++) {   //check all traces
 
-#ifdef INST_SETAR
+#ifdef INST_DIJILELE_M
      for (i = 0; i < 40; i++) { //check all traces
 #endif
-#ifdef INST_UKULELE
+#ifdef INST_DIJILELE_S
      for (i = 0; i < 12; i++) { //check all traces
 #endif
         if (fretVoltageRatio >= fretRatio[0]) { //If open string
@@ -1169,11 +1169,11 @@ void getNote(STRUM * strum, uint8_t c) {
 #endif
 
 
-#ifdef INST_UKULELE
+#ifdef INST_DIJILELE_S
        noteOffset = noteOffset*2;
 #endif
 
-#ifdef INST_SETAR
+#ifdef INST_DIJILELE_M
        
     // if acoustic tar or setar frets are the only ones that should be active. The missing frets on setar will be considered as the next existing fret
     if (acousticSetarFretsEnabled){
@@ -1281,10 +1281,10 @@ void getTapNote(TAP * tap, uint8_t c) {
     }
 #else
     //look at the resistance ratio at the finger depressing point and compare it to the fret resistance table to find the note offset
-#ifdef INST_SETAR
+#ifdef INST_DIJILELE_M
      for (i = 0; i < 40; i++) { //check all traces
 #endif
-#ifdef INST_UKULELE
+#ifdef INST_DIJILELE_S
      for (i = 0; i < 12; i++) { //check all traces
 #endif
         if (fretVoltageRatio >= fretRatio[0]) { //If open string
@@ -1298,7 +1298,7 @@ void getTapNote(TAP * tap, uint8_t c) {
 #endif
 #endif
 
-     #ifdef INST_UKULELE
+     #ifdef INST_DIJILELE_S
        noteOffset = noteOffset*2;
 #endif
 

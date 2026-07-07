@@ -9,7 +9,7 @@ static const char *LEGACY_SETTINGS_PATH = "/spiffs/settings.json";
 
 const char *settings_json_path(void)
 {
-#if defined(INST_UKULELE)
+#if defined(INST_DIJILELE_S)
     return "/spiffs/settings_ukulele.json";
 #else
     return "/spiffs/settings_setar.json";
@@ -18,7 +18,7 @@ const char *settings_json_path(void)
 
 const char *factory_json_path(void)
 {
-#if defined(INST_UKULELE)
+#if defined(INST_DIJILELE_S)
     return "/spiffs/factory_ukulele.json";
 #else
     return "/spiffs/factory_setar.json";
@@ -32,7 +32,7 @@ static cJSON *create_default_settings(void)
         return NULL;
     }
 
-#if defined(INST_UKULELE)
+#if defined(INST_DIJILELE_S)
     const int default_tuning = 14;   /* baseTable row: A4 E4 C4 G4 */
     const int default_quarter_tones = 0;
 #else

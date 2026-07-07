@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "main.h"
+#include "dijilele_product.h"
 
 static const char *TAG = "util";
 
@@ -194,12 +195,12 @@ const sustainTable instrumentSustainTable={
 
 //uint8_t tmpSettings[32];
 
-#ifdef INST_UKULELE
+#ifdef INST_DIJILELE_S
 uint8_t righthandBaseTable[4] = {A4,E4,C4,G4};
 uint8_t lefthandBaseTable[4] = {G4,C4,E4,A4};
 #endif
 
-#ifdef INST_SETAR
+#ifdef INST_DIJILELE_M
 uint8_t righthandBaseTable[4] = {C4,G3,C4,C3};
 uint8_t lefthandBaseTable[4] = {C3,C4,G3,C4};
 #endif
@@ -434,6 +435,7 @@ static cJSON *build_runtime_settings_json(void)
     cJSON_AddNumberToObject(out, "metronomeBpm", get_metronome_bpm());
     cJSON_AddNumberToObject(out, "metronomeBeats", get_metronome_numBeats());
     cJSON_AddNumberToObject(out, "metronomeVol", get_metronome_volume());
+    cJSON_AddNumberToObject(out, "productId", DIJILELE_PRODUCT_ID);
     return out;
 }
 

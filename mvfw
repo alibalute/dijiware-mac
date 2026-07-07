@@ -1,5 +1,17 @@
 #!/bin/bash
+# Manual copy of build/dijilele.bin into firmware/ (build also does this via CMake post-build).
 
-ver="$(head -1 version.txt)"
+ver="$(head -1 version.txt | tr -d '\r\n')"
+ver_dashed="${ver//./-}"
+pid="${DIJILELE_PRODUCT_ID:-0}"
 
-cp build/dijilele.bin firmware/dijilele-$ver.bin
+case "$pid" in
+  1) slug="dijilele-m" ;;
+  2) slug="dijilele-s" ;;
+  *) slug="unknown" ;;
+esac
+
+out="firmware/${slug}-${ver_dashed}.bin"
+mkdir -p firmware
+cp build/dijilele.bin "$out"
+echo "Copied -> $out"
