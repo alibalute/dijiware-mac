@@ -190,6 +190,74 @@ const  uint8_t chordTable[15][5]={
     {3,0,0,0}
 };
 
+/* Strings 1 and 3 mount opposite 0 and 2; normalize so the same physical strum
+ * picks the same chord quality on every string. */
+static uint8_t chord_row_for_strum(uint8_t stringIndex, uint8_t strumDirection)
+{
+    uint8_t dir = strumDirection;
+    if (stringIndex == 1 || stringIndex == 3) {
+        if (dir == UP) {
+            dir = DOWN;
+        } else if (dir == DOWN) {
+            dir = UP;
+        }
+    }
+    if (dir == UP) {
+        return 1; /* minor triad for upward strum */
+    }
+    if (chordType >= 0 && chordType <= 14) {
+        return (uint8_t)chordType; /* major / selected chord for downward strum */
+    }
+    return 0;
+}
+
+static void transmit_chord_notes(bool isNoteOn, uint8_t stringIndex, uint8_t strumDirection,
+                                 uint8_t note12, uint8_t note24, uint16_t pitchBend, uint8_t velocity)
+{
+    const uint8_t chordRow = chord_row_for_strum(stringIndex, strumDirection);
+    uint8_t channel;
+    uint8_t n;
+    uint16_t adjustedPitchBend;
+    const uint8_t noteTy = isNoteOn ? 0x9u : 0x8u;
+    const uint8_t noteStatus = (isNoteOn ? 0x90u : 0x80u);
+
+    for (n = 1; n <= chordTable[chordRow][CHORD_NUM_OF_NOTES]; n++) {
+        if (percussionInstrument) {
+            channel = CHANNEL_PERCUSSION;
+        } else if (pitchBend == NOTE_SEMITONE) {
+            channel = semitoneChannel;
+        } else {
+            channel = quartertoneChannel;
+        }
+
+        if (pitchBend == NOTE_SEMITONE) {
+            adjustedPitchBend = (PBCenter + PBCenterOffset) +
+                    (2 * (pitchAdjustment[pitchSystem][(note24 + (chordTable[chordRow][n] * 2)) % 24])) +
+                    fineTuningPB;
+        } else {
+            adjustedPitchBend = (PBCenter + PBCenterOffset + PBQuarterToneOffset) +
+                    (2 * (pitchAdjustment[pitchSystem][(note24 + (chordTable[chordRow][n] * 2)) % 24])) +
+                    fineTuningPB;
+        }
+
+        if (isNoteOn) {
+            midiTx(0xE, 0xE0 + channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
+            midiTx(noteTy, noteStatus + channel, note12 + chordTable[chordRow][n], velocity);
+#ifdef uart_en
+            inputToUART(0xE0 + channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
+            inputToUART(noteStatus + channel, note12 + chordTable[chordRow][n], velocity);
+#endif
+        } else {
+            midiTx(noteTy, noteStatus + channel, note12 + chordTable[chordRow][n], velocity);
+            midiTx(0xE, 0xE0 + channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
+#ifdef uart_en
+            inputToUART(noteStatus + channel, note12 + chordTable[chordRow][n], velocity);
+            inputToUART(0xE0 + channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
+#endif
+        }
+    }
+}
+
 
 uint8_t returnBaseTable(uint8_t r, uint8_t c) {
     return baseTable[r][c];
@@ -481,7 +549,6 @@ void noteOn(STRUM * strum, uint8_t c, uint8_t r) {
         strum->hammerNoteOn = false;
         return;
     }
-    uint8_t n;
     uint8_t channel = semitoneChannel;
     uint8_t velocityValue;
 
@@ -633,48 +700,7 @@ void noteOn(STRUM * strum, uint8_t c, uint8_t r) {
             send_sympathetic_string_resonance(c, note12, velocityValue, pitchBend);
 
     }else{ //if chord enabled
-        for(n=1; n<=chordTable[chordType][CHORD_NUM_OF_NOTES]; n++){
-
-            if(percussionInstrument){
-                channel=CHANNEL_PERCUSSION;
-            }
-
-            if(pitchBend == NOTE_SEMITONE){
-                if(!percussionInstrument){
-                    channel=semitoneChannel;
-                }
-                adjustedPitchBend = (PBCenter+PBCenterOffset)+
-                        (2*(pitchAdjustment[pitchSystem][ (note24+(chordTable[chordType][n]*2)) % 24 ] )) + fineTuningPB;
-
-            }else if(pitchBend == NOTE_QUARTERTONE){
-                if(!percussionInstrument){
-                    channel=quartertoneChannel;
-                }
-                adjustedPitchBend = (PBCenter+PBCenterOffset+PBQuarterToneOffset)+
-                        (2*(pitchAdjustment[pitchSystem][ (note24+(chordTable[chordType][n]*2)) % 24 ] )) + fineTuningPB;
-            }
-
-            if(strum->strumDirection==UP){
-                midiTx(0xE, 0xE0+channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
-                midiTx(0x9, 0x90+channel, note12+chordTable[chordType][n], velocityValue);
-                #ifdef uart_en
-                inputToUART(0xE0+channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
-                inputToUART(0x90+channel, note12 + chordTable[chordType][n], velocityValue);
-
-                //inputToUART(0xFB, c , UP); //send string number c , and  strum direction for android app
-
-                #endif
-            }else{
-                midiTx(0xE, 0xE0+channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
-                midiTx(0x9, 0x90+channel, note12+chordTable[1][n], velocityValue);
-                #ifdef uart_en
-                inputToUART(0xE0+channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
-                inputToUART(0x90+channel, note12 + chordTable[1][n], velocityValue);
-
-                //inputToUART(0xFB, c , DOWN); //send string number c , and  strum direction for android app
-                #endif
-            }
-        }
+        transmit_chord_notes(true, c, strum->strumDirection, note12, note24, pitchBend, velocityValue);
     }
 
 
@@ -760,7 +786,11 @@ void tapNoteOn(TAP * tap, uint8_t c, uint8_t r) {
 
 
 
-    if ( tapWithoutStrumEnabled ){
+    if (chordEnabled && !percussionInstrument) {
+        if (!tapWithoutStrumEnabled || note24 != workingBaseTable[c]) {
+            transmit_chord_notes(true, c, REST, note12, note24, tap->pitchBend, tap->velocity);
+        }
+    } else if ( tapWithoutStrumEnabled ){
         if(note24 != workingBaseTable[c]){ //when tap without strum enabled , do not play open string ..(working base table is based on 24 notes)
             midiTx(0xE, 0xE0+channel, (tempPitchBend & 0xFF), (tempPitchBend & 0xFF00) >> 8);
             midiTx(0x9, 0x90+channel, note12, tap->velocity); //3C = 60
@@ -784,7 +814,6 @@ void tapNoteOn(TAP * tap, uint8_t c, uint8_t r) {
             #endif
 
     }
-#endif
     
     //Capture the values for turning the notes off etc.
     tap->prevNote = tap->note;
@@ -796,6 +825,7 @@ void tapNoteOn(TAP * tap, uint8_t c, uint8_t r) {
     }
 
 }
+#endif
 
 /**
   void noteOff(uint32_t prevNote,
@@ -832,7 +862,6 @@ void noteOff(STRUM * strum, uint8_t c, uint8_t r) {
         midi_strum_step_on_strum_release();
         return;
     }
-    uint8_t n;
     uint8_t channel = 0;
 
     uint8_t note12;// = strum->note; // 12-based midi note number calculated in getNote()
@@ -974,45 +1003,7 @@ void noteOff(STRUM * strum, uint8_t c, uint8_t r) {
         #endif
 
     }else{
-        for(n=1; n<=chordTable[chordType][CHORD_NUM_OF_NOTES]; n++){
-
-            if(percussionInstrument){
-                channel=CHANNEL_PERCUSSION;
-            }
-
-            if(pitchBend == NOTE_SEMITONE){
-                if(!percussionInstrument){
-                    channel=semitoneChannel;
-                }
-                adjustedPitchBend = (PBCenter+PBCenterOffset)+
-                        (2*(pitchAdjustment[pitchSystem][ (note24+(chordTable[chordType][n]*2)) % 24 ] )) + fineTuningPB;
-
-            }else if(pitchBend == NOTE_QUARTERTONE){
-                if(!percussionInstrument){
-                    channel=quartertoneChannel;
-                }
-                adjustedPitchBend = (PBCenter+PBCenterOffset+PBQuarterToneOffset)+
-                        (2*(pitchAdjustment[pitchSystem][ (note24+(chordTable[chordType][n]*2)) % 24 ] )) + fineTuningPB;
-            }
-
-            if(strum->strumDirection==UP){
-                midiTx(0x8, 0x80+channel, note12+chordTable[chordType][n], 0x7F);
-                midiTx(0xE, 0xE0+channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
-
-                #ifdef uart_en
-                inputToUART(0x80+channel, note12 + chordTable[chordType][n], 0x7F);
-                inputToUART(0xE0+channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
-                #endif
-            }else{
-                midiTx(0x8, 0x80+channel, note12+chordTable[1][n], 0x7F);
-                midiTx(0xE, 0xE0+channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
-
-                #ifdef uart_en
-                inputToUART(0x80+channel, note12 + chordTable[1][n], 0x7F);
-                inputToUART(0xE0+channel, (adjustedPitchBend & 0xFF), (adjustedPitchBend & 0xFF00) >> 8);
-                #endif
-            }
-        }
+        transmit_chord_notes(false, c, strum->strumDirection, note12, note24, pitchBend, 0x7F);
     }
 
 
@@ -1053,16 +1044,16 @@ void tapNoteOff(TAP * tap, uint8_t c, uint8_t r) {
         tempPitchBend = (PBQuarterToneOffset+PBCenter+PBCenterOffset) +  (2*(pitchAdjustment[pitchSystem][note24 % 24]));
     }
 
-    //USB
-    //if (isUSBConnected() == true) {
+    if (chordEnabled && !percussionInstrument) {
+        transmit_chord_notes(false, c, REST, note12, note24, tap->pitchBend, tap->velocity);
+    } else {
         midiTx(0x8, 0x80+channel, note12, tap->velocity); //3C = 60
         midiTx(0xE, 0xE0+channel, (tempPitchBend & 0xFF), (tempPitchBend & 0xFF00) >> 8);
-    //}
-    //UART
 #ifdef uart_en
-    inputToUART(0x80+channel, note12, tap->velocity);
-    inputToUART(0xE0+channel, (tempPitchBend&0x00FF), ((tempPitchBend&0xFF00)>>8));
+        inputToUART(0x80+channel, note12, tap->velocity);
+        inputToUART(0xE0+channel, (tempPitchBend&0x00FF), ((tempPitchBend&0xFF00)>>8));
 #endif
+    }
 
     if (vibratoEnabled == true) {
         vibratoPause = false;

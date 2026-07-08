@@ -1303,7 +1303,7 @@ void ProcessIO(void)
 
             if (chordDebounce >= tappingDebounceNum)
             {
-              tempChordSel = fretVoltageToFretNumber(currentFretAverage);
+              tempChordSel = getFretNumberForString(STRING_FOUR, currentFretAverage);
               tempChordSel -= 10; // To make it fit the chord Table index
               if ((tempChordSel >= 0) && (tempChordSel <= 14))
               {
