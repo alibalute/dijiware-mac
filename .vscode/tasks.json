@@ -4,7 +4,7 @@
     {
       "label": "ESP-IDF: Build (5.0.2)",
       "type": "shell",
-      "command": "/bin/bash -lc 'unset IDF_PATH IDF_PYTHON_ENV_PATH; export IDF_PATH=/Users/dijilele/esp/v5.0.2/esp-idf; export IDF_PYTHON_ENV_PATH=/Users/dijilele/.espressif/python_env/idf5.0_py3.11_env; export PATH=/Users/dijilele/.espressif/tools/ninja/1.10.2:/Users/dijilele/.espressif/python_env/idf5.0_py3.11_env/bin:/Users/dijilele/esp/v5.0.2/esp-idf/tools:$PATH; cd ${workspaceFolder} && idf.py build'",
+      "command": "/bin/bash -lc 'unset IDF_PATH IDF_PYTHON_ENV_PATH; export IDF_PATH=/Users/dijilele/esp/v5.0.2/esp-idf; export IDF_PYTHON_ENV_PATH=/Users/dijilele/.espressif/python_env/idf5.0_py3.11_env; export PATH=/Users/dijilele/.espressif/python_env/idf5.0_py3.11_env/bin:/Users/dijilele/.espressif/tools/cmake/3.24.0/CMake.app/Contents/bin:/Users/dijilele/.espressif/tools/ninja/1.10.2:/Users/dijilele/esp/v5.0.2/esp-idf/tools:$PATH; cd ${workspaceFolder} && idf.py build'",
       "presentation": {
         "reveal": "always",
         "panel": "shared"

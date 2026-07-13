@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="520" viewBox="0 0 720 520">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#000"/>
+    </marker>
+  </defs>
+  <rect width="720" height="520" fill="#fff"/>
+  <text x="360" y="28" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold">FIG. 6 - On-device Wi-Fi firmware OTA pipeline</text>
+  <rect x="40" y="55" width="180" height="50" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="130" y="78" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">600 Trigger</text>
+  <text x="130" y="94" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">BLE 0x5C or button hold</text>
+  <rect x="250" y="55" width="180" height="50" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="340" y="78" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">602 wifiOn=true</text>
+  <text x="340" y="94" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">main.c / util.c</text>
+  <rect x="460" y="55" width="220" height="50" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="570" y="78" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">604 xWifiTask</text>
+  <text x="570" y="94" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">Wifi.cpp soft-AP start</text>
+  <line x1="220" y1="80" x2="250" y2="80" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="430" y1="80" x2="460" y2="80" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="40" y="130" width="640" height="55" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="55" y="152" font-family="Arial, sans-serif" font-size="10" font-weight="bold">606</text>
+  <text x="360" y="152" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">WebServer.cpp: GET /, GET /api/debug, POST /api/update, POST /api/storage</text>
+  <text x="360" y="170" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">CORS headers (http_ota_cors.h) for browser / WebView uploads</text>
+  <rect x="40" y="205" width="300" height="120" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="55" y="227" font-family="Arial, sans-serif" font-size="10" font-weight="bold">610 FirmwareUpdater.cpp</text>
+  <text x="190" y="248" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">612 accumulate multipart headers</text>
+  <text x="190" y="264" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">614 findFirmwareStartInBuffer</text>
+  <text x="190" y="280" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">616 esp_ota_write 128-byte chunks</text>
+  <text x="190" y="296" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">618 avoid interrupt WDT reset</text>
+  <rect x="360" y="205" width="320" height="120" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="375" y="227" font-family="Arial, sans-serif" font-size="10" font-weight="bold">620 Flash layout</text>
+  <text x="520" y="248" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">622 OTA partition (esp_ota_ops)</text>
+  <text x="520" y="264" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">624 verify + set boot partition</text>
+  <text x="520" y="280" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">626 reboot after OTA_RESTART_DELAY_MS</text>
+  <text x="520" y="296" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">628 ota_debug JSON on /api/debug</text>
+  <rect x="40" y="350" width="640" height="100" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="55" y="372" font-family="Arial, sans-serif" font-size="10" font-weight="bold">630 Companion flow (external)</text>
+  <text x="360" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">Phone joins instrument AP, probes GET /api/debug, POST multipart field firmware</text>
+  <text x="360" y="390" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">BLE may remain connected for 0x5C control while Wi-Fi carries binary payload</text>
+  <text x="360" y="408" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">Embedded index.html supports standalone browser OTA without companion app</text>
+  <rect x="40" y="465" width="640" height="35" fill="#fff" stroke="#000" stroke-width="1"/>
+  <text x="360" y="487" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">appVersion parsed at boot; 0x57/0x58/0x59 telemetered over BLE after update</text>
+  <text x="360" y="512" text-anchor="middle" font-family="Arial, sans-serif" font-size="10">FIG. 6</text>
+</svg>

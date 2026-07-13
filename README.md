@@ -27,7 +27,7 @@ DIJILELE_PRODUCT_ID=1 ./build-16mb.sh build   # Dijilele M on 16 MB hardware
 DIJILELE_PRODUCT_ID=2 ./build-4mb.sh build  # Dijilele S on 4 MB hardware
 ```
 
-See `main/dijilele_product.h` and `main/etar.h` (`INST_DIJILELE_M` / `INST_DIJILELE_S`).
+`DIJILELE_PRODUCT_ID` selects both the BLE product ID and the instrument profile (`INST_DIJILELE_M` / `INST_DIJILELE_S`); you no longer need to edit `main/etar.h` for normal builds.
 
 ### Firmware `.bin` output
 

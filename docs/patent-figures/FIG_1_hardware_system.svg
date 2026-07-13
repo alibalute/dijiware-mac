@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="520" viewBox="0 0 720 520">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#000"/>
+    </marker>
+  </defs>
+  <rect width="720" height="520" fill="#fff"/>
+  <text x="360" y="28" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold">FIG. 1 - Electronic string instrument hardware</text>
+  <rect x="250" y="55" width="220" height="200" fill="#fff" stroke="#000" stroke-width="2"/>
+  <text x="360" y="80" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold">100</text>
+  <text x="360" y="98" text-anchor="middle" font-family="Arial, sans-serif" font-size="11">ESP32-S3 MCU</text>
+  <text x="360" y="114" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">FreeRTOS firmware</text>
+  <rect x="265" y="125" width="190" height="22" fill="#fff" stroke="#000" stroke-width="1"/>
+  <text x="360" y="140" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">102 eTarTask (priority 12)</text>
+  <rect x="265" y="152" width="190" height="22" fill="#fff" stroke="#000" stroke-width="1"/>
+  <text x="360" y="167" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">104 BLE / USB / Wi-Fi stacks</text>
+  <rect x="265" y="179" width="190" height="22" fill="#fff" stroke="#000" stroke-width="1"/>
+  <text x="360" y="194" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">106 SPIFFS file system</text>
+  <rect x="265" y="206" width="190" height="22" fill="#fff" stroke="#000" stroke-width="1"/>
+  <text x="360" y="221" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">108 handleMessage control</text>
+  <rect x="40" y="280" width="150" height="90" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="115" y="302" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">110</text>
+  <text x="115" y="318" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">TLA2518 ADC</text>
+  <text x="115" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">strum pots x4</text>
+  <text x="115" y="346" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">fret / membrane</text>
+  <rect x="210" y="280" width="130" height="90" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="275" y="302" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">112</text>
+  <text x="275" y="318" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">MC3419 accel</text>
+  <text x="275" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">orientation</text>
+  <rect x="360" y="280" width="130" height="90" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="425" y="302" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">114</text>
+  <text x="425" y="318" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">VS1103B codec</text>
+  <text x="425" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">UART MIDI synth</text>
+  <rect x="510" y="280" width="170" height="90" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="595" y="302" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">116</text>
+  <text x="595" y="318" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">MCP23S08 GPIO</text>
+  <text x="595" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">LEDs, buttons</text>
+  <line x1="190" y1="325" x2="250" y2="180" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="275" y1="280" x2="320" y2="255" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="425" y1="280" x2="400" y2="255" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="595" y1="280" x2="430" y2="200" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="40" y="400" width="200" height="70" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="140" y="422" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">118 BLE-MIDI</text>
+  <text x="140" y="438" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">GATT Dijilele-XX</text>
+  <text x="140" y="452" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">service 03b80e5a...</text>
+  <rect x="260" y="400" width="200" height="70" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="360" y="422" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">120 USB-MIDI</text>
+  <text x="360" y="438" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">TinyUSB device</text>
+  <rect x="480" y="400" width="200" height="70" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="580" y="422" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">122 Wi-Fi AP</text>
+  <text x="580" y="438" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">HTTP /api/update</text>
+  <line x1="360" y1="255" x2="140" y2="400" stroke="#000" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="380" y1="255" x2="360" y2="400" stroke="#000" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="400" y1="255" x2="580" y2="400" stroke="#000" stroke-width="1" marker-end="url(#arrow)"/>
+  <text x="360" y="500" text-anchor="middle" font-family="Arial, sans-serif" font-size="10">FIG. 1</text>
+</svg>

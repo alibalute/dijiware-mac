@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="480" viewBox="0 0 720 480">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#000"/>
+    </marker>
+  </defs>
+  <rect width="720" height="480" fill="#fff"/>
+  <text x="360" y="28" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold">FIG. 3 - STRUM_DERIVATIVE detection (etar.c)</text>
+  <rect x="80" y="50" width="560" height="175" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="95" y="70" font-family="Arial, sans-serif" font-size="11" font-weight="bold">300</text>
+  <line x1="100" y1="200" x2="620" y2="200" stroke="#000" stroke-width="1"/>
+  <line x1="100" y1="85" x2="100" y2="200" stroke="#000" stroke-width="1"/>
+  <line x1="100" y1="155" x2="620" y2="152" stroke="#000" stroke-width="1" stroke-dasharray="6,4"/>
+  <text x="625" y="155" font-family="Arial, sans-serif" font-size="9">302 potMidValue</text>
+  <polyline points="100,155 200,155 240,105 300,155 400,100 480,155 620,155" fill="none" stroke="#000" stroke-width="1.5"/>
+  <line x1="400" y1="85" x2="400" y2="200" stroke="#000" stroke-width="1"/>
+  <text x="405" y="98" font-family="Arial, sans-serif" font-size="9" font-weight="bold">304 note-on</text>
+  <rect x="40" y="245" width="155" height="65" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="55" y="265" font-family="Arial, sans-serif" font-size="10" font-weight="bold">306</text>
+  <text x="117" y="275" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">readAndAverageStrum</text>
+  <text x="117" y="290" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">preSampleN1..N3 window</text>
+  <rect x="210" y="245" width="175" height="65" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="225" y="265" font-family="Arial, sans-serif" font-size="10" font-weight="bold">308</text>
+  <text x="297" y="275" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">strumDerivative</text>
+  <text x="297" y="290" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">one-sided 4-sample diff</text>
+  <rect x="400" y="245" width="140" height="65" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="415" y="265" font-family="Arial, sans-serif" font-size="10" font-weight="bold">310</text>
+  <text x="470" y="275" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">threshold compare</text>
+  <text x="470" y="290" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">onset / release</text>
+  <rect x="555" y="245" width="125" height="65" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="570" y="265" font-family="Arial, sans-serif" font-size="10" font-weight="bold">312</text>
+  <text x="617" y="275" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">strumDirection</text>
+  <text x="617" y="290" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">UP/DOWN chord</text>
+  <line x1="195" y1="277" x2="210" y2="277" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="385" y1="277" x2="400" y2="277" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="540" y1="277" x2="555" y2="277" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="120" y="330" width="480" height="55" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="135" y="352" font-family="Arial, sans-serif" font-size="10" font-weight="bold">314</text>
+  <text x="360" y="352" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">Dynamic center: if !inStrum and deflection low, potMidValue += alpha * (sample - potMidValue)</text>
+  <text x="360" y="370" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">AUTO_STRUM_CALIBRATION on release; BLE 0x02 schedules strumCalibrate in eTarTask</text>
+  <rect x="120" y="400" width="480" height="55" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="135" y="422" font-family="Arial, sans-serif" font-size="10" font-weight="bold">316</text>
+  <text x="360" y="422" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">On release: read fret ADC, getNote(), noteOn/noteOff, map peak to velocity (0x5A/0x5B range)</text>
+  <text x="360" y="440" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">Alternative build: STRUM_DEFLECTION uses position threshold + hysteresis</text>
+  <text x="360" y="465" text-anchor="middle" font-family="Arial, sans-serif" font-size="10">FIG. 3</text>
+</svg>

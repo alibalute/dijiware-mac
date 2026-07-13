@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="480" viewBox="0 0 720 480">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#000"/>
+    </marker>
+  </defs>
+  <rect width="720" height="480" fill="#fff"/>
+  <text x="360" y="28" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold">FIG. 5 - Strum-step mode integration</text>
+  <rect x="40" y="55" width="160" height="55" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="120" y="78" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">500 BLE 0x57</text>
+  <text x="120" y="95" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">enable / disable / reset</text>
+  <rect x="230" y="55" width="180" height="55" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="320" y="78" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">502 midi_player.c</text>
+  <text x="320" y="95" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">parse events, hold index</text>
+  <rect x="440" y="55" width="240" height="55" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="560" y="78" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">504 SPIFFS midiFile</text>
+  <text x="560" y="95" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">/spiffs/N.mid selected by 0x53</text>
+  <line x1="200" y1="82" x2="230" y2="82" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="410" y1="82" x2="440" y2="82" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="40" y="140" width="200" height="70" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="140" y="165" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">506 eTarTask</text>
+  <text x="140" y="182" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">strum detected / released</text>
+  <text x="140" y="196" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">derivative threshold met</text>
+  <rect x="270" y="140" width="180" height="70" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="360" y="165" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">508 pic-midi.c</text>
+  <text x="360" y="182" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">noteOn path calls</text>
+  <text x="360" y="196" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">midi_strum_step_try_note()</text>
+  <rect x="480" y="140" width="200" height="70" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="580" y="165" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold">510 send_midi_event</text>
+  <text x="580" y="182" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">UART + BLE + USB</text>
+  <text x="580" y="196" text-anchor="middle" font-family="Arial, sans-serif" font-size="8">inputToUART fan-out</text>
+  <line x1="240" y1="175" x2="270" y2="175" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="450" y1="175" x2="480" y2="175" stroke="#000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="100" y="240" width="520" height="90" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="115" y="262" font-family="Arial, sans-serif" font-size="11" font-weight="bold">512</text>
+  <text x="360" y="262" text-anchor="middle" font-family="Arial, sans-serif" font-size="10">midi_strum_step_try_note() per strum:</text>
+  <text x="360" y="280" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">1. strum_step_quiet_before_next() - CC64 off, prior note-off</text>
+  <text x="360" y="296" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">2. emit next 0x90 note-on from sorted MidiEvent list</text>
+  <text x="360" y="312" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">3. advance midi_step_event_index; wrap at EOF</text>
+  <rect x="100" y="350" width="520" height="70" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <text x="115" y="372" font-family="Arial, sans-serif" font-size="11" font-weight="bold">514</text>
+  <text x="360" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="10">On strum release: midi_strum_step_on_strum_release() sends note-off</text>
+  <text x="360" y="390" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">play_midi_file() blocked while midi_strum_step_mode active</text>
+  <text x="360" y="408" text-anchor="middle" font-family="Arial, sans-serif" font-size="9">Musician strum rate replaces sequencer clock</text>
+  <text x="360" y="465" text-anchor="middle" font-family="Arial, sans-serif" font-size="10">FIG. 5</text>
+</svg>

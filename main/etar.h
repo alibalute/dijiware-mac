@@ -14,10 +14,10 @@
 //#define binarySearch
 //#define membrane
 
-// The type of instrument that the flash will be loaded onto
-// eTar
+// Instrument profile: set by CMake from DIJILELE_PRODUCT_ID (build-4mb.sh / build-16mb.sh).
+// Uncomment one below only for ad-hoc idf.py builds without those scripts:
 //#define INST_DIJILELE_M
-#define INST_DIJILELE_S
+//#define INST_DIJILELE_S
 
 #define STRUM_DERIVATIVE
 /* Option: STRUM_DEFLECTION = deflection threshold (note-on/off by position). Dynamic center + hysteresis in etar.c make it viable. */

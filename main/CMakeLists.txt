@@ -35,7 +35,13 @@ idf_component_register(SRCS main.c
   INCLUDE_DIRS "." )
 
 if(DEFINED ENV{DIJILELE_PRODUCT_ID} AND NOT "$ENV{DIJILELE_PRODUCT_ID}" STREQUAL "")
-  target_compile_definitions(${COMPONENT_LIB} PRIVATE DIJILELE_PRODUCT_ID=$ENV{DIJILELE_PRODUCT_ID})
+  if("$ENV{DIJILELE_PRODUCT_ID}" STREQUAL "1")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE DIJILELE_PRODUCT_ID=1 INST_DIJILELE_M)
+  elseif("$ENV{DIJILELE_PRODUCT_ID}" STREQUAL "2")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE DIJILELE_PRODUCT_ID=2 INST_DIJILELE_S)
+  else()
+    message(FATAL_ERROR "DIJILELE_PRODUCT_ID must be 1 (Dijilele M) or 2 (Dijilele S), got: $ENV{DIJILELE_PRODUCT_ID}")
+  endif()
 endif()
   
   spiffs_create_partition_image(storage ../spiffs_img FLASH_IN_PROJECT)
